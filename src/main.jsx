@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -30,16 +30,61 @@ function App() {
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [image, setImage] = useState(null);
+  const [speaking, setSpeaking] = useState(false);
+  const fileInput = useRef(null);
+  const cameraInput = useRef(null);
+
+  const text =
+    mode === "explication" ? question.trim() : course.trim();
+
+  function chooseImage(file) {
+    setError("");
+
+    if (!file) return;
+
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setError("Choisis une image JPG, PNG ou WebP.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError("L'image dépasse 5 Mo. Choisis une image plus légère.");
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const dataUrl = reader.result;
+
+      if (typeof dataUrl !== "string" || !dataUrl.includes(",")) {
+        setError("Impossible de lire cette image. Réessaie.");
+        return;
+      }
+
+      setImage({
+        data: dataUrl.split(",")[1],
+        mimeType: file.type,
+        preview: dataUrl,
+        name: file.name || "Photo de l'exercice"
+      });
+      setResult("");
+    };
+
+    reader.onerror = () => {
+      setError("La lecture de l'image a échoué. Réessaie.");
+    };
+
+    reader.readAsDataURL(file);
+  }
 
   async function askAI() {
-    const text =
-      mode === "explication" ? question.trim() : course.trim();
-
-    if (!text) {
+    if (!text && !image) {
       setError(
         mode === "explication"
-          ? "Écris la notion qui te pose problème."
-          : "Colle le texte du cours à travailler."
+          ? "Écris une question ou ajoute une image."
+          : "Colle ton cours ou ajoute une image."
       );
       return;
     }
@@ -61,7 +106,13 @@ function App() {
               : "Tronc commun",
           subject,
           difficulty,
-          text
+          text,
+          image: image
+            ? {
+                data: image.data,
+                mimeType: image.mimeType
+              }
+            : undefined
         })
       });
 
@@ -75,7 +126,7 @@ function App() {
     } catch (e) {
       setError(
         e.message ||
-          "Connexion impossible. Vérifie ta connexion Internet et la configuration du serveur."
+          "Connexion impossible. Vérifie ta connexion Internet."
       );
     } finally {
       setLoading(false);
@@ -93,16 +144,42 @@ function App() {
     const plainText = result
       .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
       .replace(/\$([^$]+)\$/g, "$1")
-      .replace(/\\\[(.*?)\\\]/gs, "$1")
-      .replace(/\\\((.*?)\\\)/gs, "$1")
-      .replace(/\\(?:frac|sqrt|Delta|mathbb|text|quad|times|neq|leq|geq)\b/g, " ")
-      .replace(/[{}]/g, " ")
-      .replace(/[*#`_]/g, " ");
+      .replace(/\\\[([\s\S]*?)\\\]/g, "$1")
+      .replace(/\\\(([\s\S]*?)\\\)/g, "$1")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\\(?:frac|sqrt|Delta|pi|times|div|neq|leq|geq|cdot|text|mathrm|left|right)\b/g, " ")
+      .replace(/[{}\\$*_#>`~]/g, " ");
 
     const utterance = new SpeechSynthesisUtterance(plainText);
     utterance.lang = "fr-FR";
     utterance.rate = 0.92;
+
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+
+    setSpeaking(true);
     window.speechSynthesis.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeaking(false);
+  }
+
+  function resetLesson() {
+    stopSpeaking();
+    setCourse("");
+    setQuestion("");
+    setImage(null);
+    setResult("");
+    setError("");
+    if (fileInput.current) fileInput.current.value = "";
+    if (cameraInput.current) cameraInput.current.value = "";
   }
 
   return (
@@ -124,11 +201,7 @@ function App() {
         <section className="hero">
           <div>
             <div className="eyebrow">TON COMPAGNON D'ÉTUDE</div>
-            <h1>
-              Ton cours devient
-              <br />
-              <em>plus clair.</em>
-            </h1>
+            <h1>Ton cours devient<br /><em>plus clair.</em></h1>
             <p>
               Une explication à la fois. Des exemples concrets.
               Des exercices pour vérifier que tu as compris —
@@ -140,7 +213,6 @@ function App() {
               <span>✍️ Exercices corrigés</span>
             </div>
           </div>
-
           <div className="hero-art">
             <div className="book">✦</div>
             <div className="floating f1">Je comprends !</div>
@@ -175,20 +247,16 @@ function App() {
             <div className="side-note">
               <b>La méthode Klasévia</b>
               <p>
-                1. Comprends l'idée
-                <br />
-                2. Observe un exemple
-                <br />
-                3. Entraîne-toi
-                <br />
+                1. Comprends l'idée<br />
+                2. Observe un exemple<br />
+                3. Entraîne-toi<br />
                 4. Corrige tes erreurs
               </p>
             </div>
 
             <div className="privacy">
               Tes demandes sont envoyées au service IA configuré
-              pour l'application. Évite d'entrer des informations
-              personnelles.
+              pour l'application. Évite d'entrer des informations personnelles.
             </div>
           </aside>
 
@@ -200,30 +268,24 @@ function App() {
                     ? "FICHE DE RÉVISION"
                     : "EXPLICATION PAS À PAS"}
                 </div>
-
                 <h2>
                   {mode === "synthese"
                     ? "Transforme ta leçon"
                     : "Qu'est-ce qui te semble flou ?"}
                 </h2>
-
                 <p>
                   {mode === "synthese"
                     ? "L'IA repère les idées essentielles, définit les mots-clés et propose des exercices."
                     : "L'IA adapte son explication à ta classe et utilise des exemples concrets."}
                 </p>
               </div>
-
               <div className="spark">✳</div>
             </div>
 
             <div className="formgrid">
               <label>
                 Ma classe
-                <select
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value)}
-                >
+                <select value={grade} onChange={(e) => setGrade(e.target.value)}>
                   {grades.map((g) => (
                     <option key={g} value={g}>{g}</option>
                   ))}
@@ -232,10 +294,7 @@ function App() {
 
               <label>
                 Matière
-                <select
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                >
+                <select value={subject} onChange={(e) => setSubject(e.target.value)}>
                   {subjects.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -245,10 +304,7 @@ function App() {
               {(grade === "Première" || grade === "Terminale") && (
                 <label>
                   Ma série
-                  <select
-                    value={serie}
-                    onChange={(e) => setSerie(e.target.value)}
-                  >
+                  <select value={serie} onChange={(e) => setSerie(e.target.value)}>
                     {series.map((s) => (
                       <option key={s} value={s}>Série {s}</option>
                     ))}
@@ -290,9 +346,80 @@ function App() {
               )}
             </div>
 
-            {error && (
-              <div className="error" role="alert">{error}</div>
-            )}
+            <section className="image-tools">
+              <h3>📷 Ajouter un exercice en image</h3>
+              <p>
+                Prends une photo de ton cahier ou choisis une image
+                pour que Klasévia lise et analyse son contenu.
+              </p>
+
+              <div className="image-buttons">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => cameraInput.current?.click()}
+                >
+                  📸 Prendre une photo
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  🖼️ Choisir une image
+                </button>
+              </div>
+
+              <input
+                ref={cameraInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  chooseImage(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={(e) => {
+                  chooseImage(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+
+              {image && (
+                <div className="selected-image">
+                  <img
+                    src={image.preview}
+                    alt="Aperçu de l'exercice à analyser"
+                    style={{
+                      display: "block",
+                      maxWidth: "100%",
+                      maxHeight: "320px",
+                      objectFit: "contain",
+                      borderRadius: "12px",
+                      marginTop: "12px"
+                    }}
+                  />
+                  <p>{image.name}</p>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setImage(null)}
+                  >
+                    Retirer l'image
+                  </button>
+                </div>
+              )}
+            </section>
+
+            {error && <div className="error" role="alert">{error}</div>}
 
             <button
               className="primary"
@@ -301,8 +428,10 @@ function App() {
             >
               {loading ? (
                 <>
-                  <span className="spinner" /> Klasévia réfléchit…
+                  <span className="spinner" /> Klasévia analyse…
                 </>
+              ) : image ? (
+                "Analyser l'image et répondre →"
               ) : mode === "synthese" ? (
                 "Créer ma fiche de cours →"
               ) : (
@@ -314,9 +443,14 @@ function App() {
               <section className="answer">
                 <div className="answer-top">
                   <h3>✦ Ta réponse Klasévia</h3>
-                  <button className="secondary" onClick={speak}>
-                    🔊 Écouter
-                  </button>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <button
+                      className="secondary"
+                      onClick={speaking ? stopSpeaking : speak}
+                    >
+                      {speaking ? "⏹ Arrêter" : "🔊 Écouter"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="answer-body">
@@ -328,21 +462,13 @@ function App() {
                   </ReactMarkdown>
                 </div>
 
-                <button
-                  className="secondary"
-                  onClick={() => {
-                    setCourse("");
-                    setQuestion("");
-                    setResult("");
-                    setError("");
-                  }}
-                >
+                <button className="secondary" onClick={resetLesson}>
                   Nouvelle leçon
                 </button>
 
                 <p className="disclaimer">
-                  Vérifie les informations avec ton cours et les
-                  consignes de ton enseignant. L’IA peut faire des erreurs.
+                  Vérifie les informations avec ton cours et les consignes
+                  de ton enseignant. L’IA peut faire des erreurs.
                 </p>
               </section>
             )}
