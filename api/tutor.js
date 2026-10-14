@@ -28,6 +28,8 @@ export default async function handler(req, res) {
   const key = process.env.GEMINI_API_KEY;
 
   if (!key) {
+    console.error("GEMINI_API_KEY absente dans Vercel.");
+
     return res.status(503).json({
       error: "Le service IA n'est pas configuré. Vérifie GEMINI_API_KEY dans Vercel."
     });
@@ -83,7 +85,7 @@ Si les informations sont insuffisantes, signale-le.
 
   try {
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
       {
         method: "POST",
         headers: {
@@ -110,12 +112,12 @@ Si les informations sont insuffisantes, signale-le.
       console.error(
         "Gemini error:",
         response.status,
-        data?.error?.message
+        data?.error?.message || "Erreur inconnue"
       );
 
       return res.status(502).json({
         error:
-          "Gemini a refusé la demande. Consulte les journaux Vercel pour connaître la cause exacte."
+          "Le service IA est momentanément indisponible. Réessaie plus tard."
       });
     }
 
@@ -125,6 +127,11 @@ Si les informations sont insuffisantes, signale-le.
       .trim();
 
     if (!answer) {
+      console.error(
+        "Gemini n'a renvoyé aucune réponse exploitable.",
+        JSON.stringify(data?.promptFeedback || {})
+      );
+
       return res.status(502).json({
         error: "L'IA n'a pas renvoyé de réponse exploitable. Réessaie."
       });
@@ -132,10 +139,13 @@ Si les informations sont insuffisantes, signale-le.
 
     return res.status(200).json({ answer });
   } catch (error) {
-    console.error("Klasévia request failed:", error);
+    console.error("Klasévia request failed:", error?.message || error);
 
     return res.status(500).json({
       error: "Erreur serveur pendant la demande à l'IA."
     });
   }
 }
+
+
+
