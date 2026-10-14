@@ -1,5 +1,10 @@
+
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import "./style.css";
 
 const grades = [
@@ -63,9 +68,7 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.error || "La demande n'a pas abouti."
-        );
+        throw new Error(data.error || "La demande n'a pas abouti.");
       }
 
       setResult(data.answer || "Aucune réponse reçue. Réessaie.");
@@ -87,10 +90,18 @@ function App() {
 
     window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(result);
+    const plainText = result
+      .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
+      .replace(/\$([^$]+)\$/g, "$1")
+      .replace(/\\\[(.*?)\\\]/gs, "$1")
+      .replace(/\\\((.*?)\\\)/gs, "$1")
+      .replace(/\\(?:frac|sqrt|Delta|mathbb|text|quad|times|neq|leq|geq)\b/g, " ")
+      .replace(/[{}]/g, " ")
+      .replace(/[*#`_]/g, " ");
+
+    const utterance = new SpeechSynthesisUtterance(plainText);
     utterance.lang = "fr-FR";
     utterance.rate = 0.92;
-
     window.speechSynthesis.speak(utterance);
   }
 
@@ -214,9 +225,7 @@ function App() {
                   onChange={(e) => setGrade(e.target.value)}
                 >
                   {grades.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
+                    <option key={g} value={g}>{g}</option>
                   ))}
                 </select>
               </label>
@@ -228,9 +237,7 @@ function App() {
                   onChange={(e) => setSubject(e.target.value)}
                 >
                   {subjects.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </label>
@@ -243,9 +250,7 @@ function App() {
                     onChange={(e) => setSerie(e.target.value)}
                   >
                     {series.map((s) => (
-                      <option key={s} value={s}>
-                        Série {s}
-                      </option>
+                      <option key={s} value={s}>Série {s}</option>
                     ))}
                   </select>
                 </label>
@@ -257,15 +262,9 @@ function App() {
                   value={difficulty}
                   onChange={(e) => setDifficulty(e.target.value)}
                 >
-                  <option value="simple">
-                    Très simple, avec des mots faciles
-                  </option>
-                  <option value="normal">
-                    Détaillé, avec exemples
-                  </option>
-                  <option value="approfondi">
-                    Approfondi, avec méthode et pièges fréquents
-                  </option>
+                  <option value="simple">Très simple, avec des mots faciles</option>
+                  <option value="normal">Détaillé, avec exemples</option>
+                  <option value="approfondi">Approfondi, avec méthode et pièges fréquents</option>
                 </select>
               </label>
 
@@ -292,9 +291,7 @@ function App() {
             </div>
 
             {error && (
-              <div className="error" role="alert">
-                {error}
-              </div>
+              <div className="error" role="alert">{error}</div>
             )}
 
             <button
@@ -323,13 +320,12 @@ function App() {
                 </div>
 
                 <div className="answer-body">
-                  {result.split("\n").map((line, i) =>
-                    line.trim() ? (
-                      <p key={i}>{line}</p>
-                    ) : (
-                      <div key={i} className="smallgap" />
-                    )
-                  )}
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                  >
+                    {result}
+                  </ReactMarkdown>
                 </div>
 
                 <button
