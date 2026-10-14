@@ -29,7 +29,7 @@ export default async function handler(req, res) {
 
   if (!key) {
     return res.status(503).json({
-      error: "Le service IA n'est pas configuré. Vérifie la variable GEMINI_API_KEY dans Vercel."
+      error: "Le service IA n'est pas configuré. Vérifie GEMINI_API_KEY dans Vercel."
     });
   }
 
@@ -40,33 +40,36 @@ export default async function handler(req, res) {
 
   const mission =
     mode === "explication"
-      ? `Explique la notion demandée progressivement. Commence par une définition simple, puis explique les étapes, donne un exemple entièrement résolu, indique les erreurs fréquentes et propose 3 exercices progressifs avec leurs corrigés à la fin.`
-      : `Résume fidèlement le cours fourni. Présente un titre, les objectifs, un résumé structuré, les définitions et formules essentielles, un exemple expliqué, 5 points à retenir et 5 exercices progressifs avec leurs corrigés à la fin. Signale clairement les informations qui ne figurent pas dans le cours.`;
+      ? `Explique la notion progressivement.
+Commence par une définition simple, explique les étapes,
+donne un exemple entièrement résolu, indique les erreurs
+fréquentes et propose 3 exercices progressifs avec leurs
+corrigés à la fin.`
+      : `Résume fidèlement le cours fourni.
+Présente un titre, les objectifs, un résumé structuré,
+les définitions et formules essentielles, un exemple expliqué,
+5 points à retenir et 5 exercices progressifs avec leurs
+corrigés à la fin. Signale les informations absentes du cours.`;
 
   const prompt = `
 Tu es Klasévia, un répétiteur numérique bienveillant
 pour les élèves de Côte d'Ivoire.
 
-Réponds en français clair et adapte tes explications
-au programme et au niveau scolaire indiqués.
+Réponds en français clair, avec une pédagogie progressive.
 
 Classe : ${niveau}
 Série : ${serieEleve}
 Matière : ${matiere}
 Niveau de détail : ${detail}
 
-Pour les élèves de Première et de Terminale,
-tiens compte de leur série :
-- Série A : privilégie les matières littéraires
-  lorsque cela est pertinent.
-- Série C : tiens compte de l'orientation
-  mathématiques et sciences physiques.
-- Série D : tiens compte de l'orientation
-  mathématiques et sciences de la vie et de la Terre.
+Adapte les explications à la série :
+- Série A : orientation littéraire, selon le sujet.
+- Série C : mathématiques et sciences physiques.
+- Série D : mathématiques et sciences de la vie et de la Terre.
 
-Ne suppose pas que toutes les séries ont exactement
-les mêmes programmes. Si tu n'es pas certain d'un point
-du programme ivoirien, indique-le honnêtement.
+Ne suppose pas que les programmes sont identiques.
+Si tu n'es pas certain d'un point du programme ivoirien,
+indique-le honnêtement.
 
 Mission :
 ${mission}
@@ -75,13 +78,12 @@ Contenu ou question de l'élève :
 ${text}
 
 Ne prétends pas remplacer l'enseignant.
-Si les informations fournies sont insuffisantes,
-signale-le clairement.
+Si les informations sont insuffisantes, signale-le.
 `;
 
   try {
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
       {
         method: "POST",
         headers: {
@@ -112,7 +114,8 @@ signale-le clairement.
       );
 
       return res.status(502).json({
-        error: "Le service IA a refusé la demande. Vérifie la clé API, les autorisations, le modèle et les quotas dans Google AI Studio."
+        error:
+          "Gemini a refusé la demande. Consulte les journaux Vercel pour connaître la cause exacte."
       });
     }
 
@@ -132,7 +135,7 @@ signale-le clairement.
     console.error("Klasévia request failed:", error);
 
     return res.status(500).json({
-      error: "Erreur serveur pendant la demande à l'IA. Réessaie plus tard."
+      error: "Erreur serveur pendant la demande à l'IA."
     });
   }
 }
