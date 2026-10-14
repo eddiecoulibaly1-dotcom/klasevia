@@ -32,15 +32,16 @@ function App() {
   const [error, setError] = useState("");
   const [image, setImage] = useState(null);
   const [speaking, setSpeaking] = useState(false);
+
   const fileInput = useRef(null);
   const cameraInput = useRef(null);
+  const utteranceRef = useRef(null);
 
   const text =
     mode === "explication" ? question.trim() : course.trim();
 
   function chooseImage(file) {
     setError("");
-
     if (!file) return;
 
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
@@ -89,6 +90,7 @@ function App() {
       return;
     }
 
+    stopSpeaking();
     setLoading(true);
     setError("");
     setResult("");
@@ -108,10 +110,7 @@ function App() {
           difficulty,
           text,
           image: image
-            ? {
-                data: image.data,
-                mimeType: image.mimeType
-              }
+            ? { data: image.data, mimeType: image.mimeType }
             : undefined
         })
       });
@@ -133,41 +132,109 @@ function App() {
     }
   }
 
+  function makeSpeakable(source) {
+    return source
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
+      .replace(/\\\[([\s\S]*?)\\\]/g, "$1")
+      .replace(/\\\(([\s\S]*?)\\\)/g, "$1")
+      .replace(/\$([^$]+)\$/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/^\s*\d+\.\s+/gm, "")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/\*(.*?)\*/g, "$1")
+      .replace(/__(.*?)__/g, "$1")
+      .replace(/_(.*?)_/g, "$1")
+      .replace(/\\(?:frac|sqrt|Delta|pi|times|div|neq|leq|geq|cdot|text|mathrm|left|right)\b/g, " ")
+      .replace(/[{}$#*_`>\\]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function speak() {
-    if (!result || !("speechSynthesis" in window)) {
-      setError("La lecture vocale n'est pas disponible sur ce navigateur.");
+    if (!result.trim()) {
+      setError("Aucune réponse à écouter.");
       return;
     }
 
-    window.speechSynthesis.cancel();
+    if (!("speechSynthesis" in window) ||
+        typeof window.SpeechSynthesisUtterance === "undefined") {
+      setError(
+        "La lecture vocale n'est pas prise en charge ici. Essaie d'ouvrir Klasévia dans Chrome."
+      );
+      return;
+    }
 
-    const plainText = result
-      .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
-      .replace(/\$([^$]+)\$/g, "$1")
-      .replace(/\\\[([\s\S]*?)\\\]/g, "$1")
-      .replace(/\\\(([\s\S]*?)\\\)/g, "$1")
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/`([^`]+)`/g, "$1")
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/\\(?:frac|sqrt|Delta|pi|times|div|neq|leq|geq|cdot|text|mathrm|left|right)\b/g, " ")
-      .replace(/[{}\\$*_#>`~]/g, " ");
+    const synth = window.speechSynthesis;
+    const spokenText = makeSpeakable(result);
 
-    const utterance = new SpeechSynthesisUtterance(plainText);
+    if (!spokenText) {
+      setError("Aucun texte lisible n'a été trouvé dans cette réponse.");
+      return;
+    }
+
+    synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(spokenText);
     utterance.lang = "fr-FR";
-    utterance.rate = 0.92;
+    utterance.rate = 0.88;
+    utterance.pitch = 1;
+    utterance.volume = 1;
 
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
+    const voices = synth.getVoices();
+    const frenchVoice = voices.find(
+      (v) => v.lang && v.lang.toLowerCase().startsWith("fr")
+    );
 
-    setSpeaking(true);
-    window.speechSynthesis.speak(utterance);
+    if (frenchVoice) {
+      utterance.voice = frenchVoice;
+    }
+
+    utterance.onstart = () => {
+      setSpeaking(true);
+      setError("");
+    };
+
+    utterance.onend = () => {
+      setSpeaking(false);
+      utteranceRef.current = null;
+    };
+
+    utterance.onerror = (event) => {
+      setSpeaking(false);
+      utteranceRef.current = null;
+
+      if (event.error !== "canceled" && event.error !== "interrupted") {
+        setError(
+          "La lecture vocale a échoué (" +
+          event.error +
+          "). Vérifie le moteur vocal de ton téléphone puis réessaie."
+        );
+      }
+    };
+
+    utteranceRef.current = utterance;
+    setError("");
+
+    try {
+      synth.resume();
+      synth.speak(utterance);
+      setSpeaking(true);
+    } catch (e) {
+      setSpeaking(false);
+      setError("Impossible de démarrer la lecture vocale. Réessaie.");
+    }
   }
 
   function stopSpeaking() {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+    utteranceRef.current = null;
     setSpeaking(false);
   }
 
@@ -227,6 +294,7 @@ function App() {
             <button
               className={mode === "synthese" ? "nav active" : "nav"}
               onClick={() => {
+                stopSpeaking();
                 setMode("synthese");
                 setError("");
               }}
@@ -237,6 +305,7 @@ function App() {
             <button
               className={mode === "explication" ? "nav active" : "nav"}
               onClick={() => {
+                stopSpeaking();
                 setMode("explication");
                 setError("");
               }}
@@ -443,14 +512,13 @@ function App() {
               <section className="answer">
                 <div className="answer-top">
                   <h3>✦ Ta réponse Klasévia</h3>
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                    <button
-                      className="secondary"
-                      onClick={speaking ? stopSpeaking : speak}
-                    >
-                      {speaking ? "⏹ Arrêter" : "🔊 Écouter"}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={speaking ? stopSpeaking : speak}
+                  >
+                    {speaking ? "⏹ Arrêter" : "🔊 Écouter"}
+                  </button>
                 </div>
 
                 <div className="answer-body">
