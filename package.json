@@ -12,7 +12,14 @@
     "@vitejs/plugin-react": "latest",
     "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "react-markdown": "latest",
+    "remark-math": "latest",
+    "rehype-katex": "latest",
+    "katex": "latest"
   },
   "devDependencies": {}
 }
+
+
+
