@@ -10,15 +10,35 @@ const CLASSES = [
   "CP1", "CP2", "CE1", "CE2", "CM1", "CM2",
   "6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale"
 ];
+
 const SUBJECTS = [
   "Mathématiques", "Français", "Anglais", "Physique-Chimie",
   "SVT", "Histoire-Géographie", "Philosophie", "Informatique",
   "Économie", "Éducation civique", "Autre"
 ];
+
 const SERIES = [
   "Non précisée", "Tronc commun", "A1", "A2", "C", "D",
   "A", "F", "G", "Autre"
 ];
+
+/*
+ * Les classes de CP1 à 3e ne sont pas associées à une série.
+ * La série ne devient pertinente qu'à partir de la Seconde
+ * dans la logique actuelle de Klasévia.
+ */
+const GRADES_WITHOUT_SERIES = [
+  "CP1", "CP2", "CE1", "CE2", "CM1", "CM2",
+  "6e", "5e", "4e", "3e"
+];
+
+function gradeHasSeries(grade) {
+  return !GRADES_WITHOUT_SERIES.includes(grade);
+}
+
+function normalizeSerie(grade, serie) {
+  return gradeHasSeries(grade) ? (serie || "Non précisée") : "Non précisée";
+}
 
 const SPEED = 1.25;
 const MAX_PDF_SIZE = 3 * 1024 * 1024;
@@ -32,14 +52,21 @@ function makeId() {
 }
 
 function makeConversation(settings = {}) {
+  const grade = settings.grade || "Terminale";
+  const serie = normalizeSerie(
+    grade,
+    settings.serie || "D"
+  );
+
   const now = new Date().toISOString();
+
   return {
     id: makeId(),
     title: "Nouvelle conversation",
     createdAt: now,
     updatedAt: now,
-    grade: settings.grade || "Terminale",
-    serie: settings.serie || "D",
+    grade,
+    serie,
     subject: settings.subject || "Mathématiques",
     difficulty: settings.difficulty || "détaillé",
     mode: settings.mode || "explication",
@@ -47,49 +74,95 @@ function makeConversation(settings = {}) {
   };
 }
 
+function normalizeConversation(conversation) {
+  if (!conversation || typeof conversation !== "object") {
+    return null;
+  }
+
+  const grade = conversation.grade || "Terminale";
+
+  return {
+    ...conversation,
+    grade,
+    serie: normalizeSerie(grade, conversation.serie),
+    subject: conversation.subject || "Mathématiques",
+    difficulty: conversation.difficulty || "détaillé",
+    mode: conversation.mode || "explication",
+    messages: Array.isArray(conversation.messages)
+      ? conversation.messages
+      : []
+  };
+}
+
 function loadSavedData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
+
     if (!raw) {
       const first = makeConversation();
-      return { conversations: [first], activeId: first.id };
+      return {
+        conversations: [first],
+        activeId: first.id
+      };
     }
 
     const parsed = JSON.parse(raw);
+
     const conversations = Array.isArray(parsed.conversations)
-      ? parsed.conversations.filter(c =>
-          c &&
-          typeof c.id === "string" &&
-          Array.isArray(c.messages)
-        ).slice(0, MAX_SAVED_CONVERSATIONS)
+      ? parsed.conversations
+          .filter(c =>
+            c &&
+            typeof c.id === "string" &&
+            Array.isArray(c.messages)
+          )
+          .map(normalizeConversation)
+          .filter(Boolean)
+          .slice(0, MAX_SAVED_CONVERSATIONS)
       : [];
 
     if (conversations.length) {
-      const activeId = conversations.some(c => c.id === parsed.activeId)
+      const activeId = conversations.some(
+        c => c.id === parsed.activeId
+      )
         ? parsed.activeId
         : conversations[0].id;
-      return { conversations, activeId };
+
+      return {
+        conversations,
+        activeId
+      };
     }
   } catch (_) {
     // Si l'historique est illisible, on démarre une conversation propre.
   }
 
   const first = makeConversation();
-  return { conversations: [first], activeId: first.id };
+
+  return {
+    conversations: [first],
+    activeId: first.id
+  };
 }
 
 function getSpeechRecognition() {
   if (typeof window === "undefined") return null;
+
   return window.SpeechRecognition ||
     window.webkitSpeechRecognition ||
     null;
 }
 
 function chooseFrenchVoice(voices) {
-  const french = voices.filter(v => /^fr([-_]|$)/i.test(v.lang || ""));
+  const french = voices.filter(v =>
+    /^fr([-_]|$)/i.test(v.lang || "")
+  );
+
   return french.find(v =>
     /natural|naturel|neural|premium|enhanced/i.test(v.name)
-  ) || french.find(v => /^fr-FR$/i.test(v.lang)) || french[0] || null;
+  ) ||
+    french.find(v => /^fr-FR$/i.test(v.lang)) ||
+    french[0] ||
+    null;
 }
 
 function splitSpeech(text, maxLength = 220) {
@@ -103,12 +176,16 @@ function splitSpeech(text, maxLength = 220) {
     .trim();
 
   if (!cleaned) return [];
-  const sentences = cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleaned];
+
+  const sentences =
+    cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleaned];
+
   const chunks = [];
   let current = "";
 
   for (const sentence of sentences) {
     const part = sentence.trim();
+
     if (!part) continue;
 
     if ((current + " " + part).trim().length <= maxLength) {
@@ -120,8 +197,11 @@ function splitSpeech(text, maxLength = 220) {
         current = part;
       } else {
         current = "";
+
         for (const word of part.split(/\s+/)) {
-          if ((current + " " + word).trim().length > maxLength) {
+          if (
+            (current + " " + word).trim().length > maxLength
+          ) {
             if (current) chunks.push(current);
             current = word;
           } else {
@@ -133,14 +213,22 @@ function splitSpeech(text, maxLength = 220) {
   }
 
   if (current) chunks.push(current);
+
   return chunks;
 }
 
 function readAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Lecture du fichier impossible."));
+
+    reader.onload = () =>
+      resolve(String(reader.result));
+
+    reader.onerror = () =>
+      reject(
+        new Error("Lecture du fichier impossible.")
+      );
+
     reader.readAsDataURL(file);
   });
 }
@@ -160,6 +248,7 @@ function formatDate(value) {
 
 function App() {
   const [savedData, setSavedData] = useState(loadSavedData);
+
   const [grade, setGrade] = useState("Terminale");
   const [serie, setSerie] = useState("D");
   const [subject, setSubject] = useState("Mathématiques");
@@ -190,18 +279,27 @@ function App() {
   const speechIndexRef = useRef(0);
 
   const conversations = savedData.conversations;
-  const activeConversation =
-    conversations.find(c => c.id === savedData.activeId) ||
-    conversations[0];
 
-  const messages = activeConversation?.messages || [];
-  const answer = [...messages]
-    .reverse()
-    .find(m => m.role === "assistant")?.content || "";
+  const activeConversation =
+    conversations.find(
+      c => c.id === savedData.activeId
+    ) || conversations[0];
+
+  const messages =
+    activeConversation?.messages || [];
+
+  const answer =
+    [...messages]
+      .reverse()
+      .find(m => m.role === "assistant")
+      ?.content || "";
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedData));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(savedData)
+      );
     } catch (_) {
       setError(
         "L'historique ne peut pas être enregistré. L'espace de stockage du navigateur est peut-être plein."
@@ -213,26 +311,48 @@ function App() {
     const synth = window.speechSynthesis;
     const Recognition = getSpeechRecognition();
 
-    setVoiceSupported(Boolean(synth && window.SpeechSynthesisUtterance));
-    setRecognitionSupported(Boolean(Recognition));
+    setVoiceSupported(
+      Boolean(
+        synth &&
+        window.SpeechSynthesisUtterance
+      )
+    );
+
+    setRecognitionSupported(
+      Boolean(Recognition)
+    );
 
     function updateVoice() {
       if (!synth) return;
-      const voice = chooseFrenchVoice(synth.getVoices());
+
+      const voice = chooseFrenchVoice(
+        synth.getVoices()
+      );
+
       setAvailableVoice(
-        voice ? `${voice.name} (${voice.lang})` : "Voix française non détectée"
+        voice
+          ? `${voice.name} (${voice.lang})`
+          : "Voix française non détectée"
       );
     }
 
     if (synth) {
       updateVoice();
-      synth.addEventListener?.("voiceschanged", updateVoice);
+
+      synth.addEventListener?.(
+        "voiceschanged",
+        updateVoice
+      );
     }
 
     return () => {
       speechRunRef.current++;
       synth?.cancel();
-      synth?.removeEventListener?.("voiceschanged", updateVoice);
+      synth?.removeEventListener?.(
+        "voiceschanged",
+        updateVoice
+      );
+
       try {
         recognitionRef.current?.stop();
       } catch (_) {}
@@ -242,9 +362,10 @@ function App() {
   function updateConversation(id, updater) {
     setSavedData(previous => ({
       ...previous,
-      conversations: previous.conversations.map(c =>
-        c.id === id ? updater(c) : c
-      )
+      conversations:
+        previous.conversations.map(c =>
+          c.id === id ? updater(c) : c
+        )
     }));
   }
 
@@ -252,45 +373,76 @@ function App() {
     speechRunRef.current++;
     speechQueueRef.current = [];
     speechIndexRef.current = 0;
+
     window.speechSynthesis?.cancel();
+
     setSpeaking(false);
     setVoiceStatus("");
   }
 
   function speakNext(runId) {
-    if (runId !== speechRunRef.current) return;
+    if (runId !== speechRunRef.current) {
+      return;
+    }
 
     const synth = window.speechSynthesis;
     const chunks = speechQueueRef.current;
 
-    if (speechIndexRef.current >= chunks.length) {
+    if (
+      speechIndexRef.current >=
+      chunks.length
+    ) {
       setSpeaking(false);
       setVoiceStatus("");
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(
-      chunks[speechIndexRef.current]
-    );
-    const voice = chooseFrenchVoice(synth.getVoices());
+    const utterance =
+      new SpeechSynthesisUtterance(
+        chunks[speechIndexRef.current]
+      );
 
-    utterance.lang = voice?.lang || "fr-FR";
-    if (voice) utterance.voice = voice;
+    const voice =
+      chooseFrenchVoice(
+        synth.getVoices()
+      );
+
+    utterance.lang =
+      voice?.lang || "fr-FR";
+
+    if (voice) {
+      utterance.voice = voice;
+    }
+
     utterance.rate = SPEED;
     utterance.pitch = 1.05;
     utterance.volume = 1;
 
     utterance.onend = () => {
-      if (runId !== speechRunRef.current) return;
+      if (runId !== speechRunRef.current) {
+        return;
+      }
+
       speechIndexRef.current++;
       speakNext(runId);
     };
 
     utterance.onerror = event => {
-      if (runId !== speechRunRef.current) return;
-      if (event.error === "canceled" || event.error === "interrupted") return;
+      if (runId !== speechRunRef.current) {
+        return;
+      }
+
+      if (
+        event.error === "canceled" ||
+        event.error === "interrupted"
+      ) {
+        return;
+      }
+
       setSpeaking(false);
-      setVoiceStatus("La lecture a rencontré un problème. Réessaie.");
+      setVoiceStatus(
+        "La lecture a rencontré un problème. Réessaie."
+      );
     };
 
     synth.speak(utterance);
@@ -298,27 +450,44 @@ function App() {
 
   function startSpeaking(content = answer) {
     if (!content.trim()) {
-      setVoiceStatus("Aucune réponse à lire pour le moment.");
+      setVoiceStatus(
+        "Aucune réponse à lire pour le moment."
+      );
       return;
     }
 
     if (!("speechSynthesis" in window)) {
-      setVoiceStatus("La lecture vocale n'est pas disponible dans ce navigateur.");
+      setVoiceStatus(
+        "La lecture vocale n'est pas disponible dans ce navigateur."
+      );
       return;
     }
 
     stopSpeaking();
-    const runId = speechRunRef.current;
-    speechQueueRef.current = splitSpeech(content);
+
+    const runId =
+      speechRunRef.current;
+
+    speechQueueRef.current =
+      splitSpeech(content);
+
     speechIndexRef.current = 0;
 
-    if (!speechQueueRef.current.length) {
-      setVoiceStatus("Aucun texte lisible dans cette réponse.");
+    if (
+      !speechQueueRef.current.length
+    ) {
+      setVoiceStatus(
+        "Aucun texte lisible dans cette réponse."
+      );
       return;
     }
 
     setSpeaking(true);
-    setVoiceStatus(`Lecture en cours à ${SPEED}×`);
+
+    setVoiceStatus(
+      `Lecture en cours à ${SPEED}×`
+    );
+
     speakNext(runId);
   }
 
@@ -327,12 +496,14 @@ function App() {
       try {
         recognitionRef.current?.stop();
       } catch (_) {}
+
       setListening(false);
       setVoiceStatus("");
       return;
     }
 
-    const Recognition = getSpeechRecognition();
+    const Recognition =
+      getSpeechRecognition();
 
     if (!Recognition) {
       setVoiceStatus(
@@ -343,37 +514,58 @@ function App() {
 
     stopSpeaking();
 
-    const recognition = new Recognition();
+    const recognition =
+      new Recognition();
+
     recognition.lang = "fr-FR";
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    recognitionRef.current = recognition;
+
+    recognitionRef.current =
+      recognition;
 
     let finalTranscript = "";
 
     recognition.onstart = () => {
       setListening(true);
-      setVoiceStatus("Je t'écoute. Parle maintenant.");
+
+      setVoiceStatus(
+        "Je t'écoute. Parle maintenant."
+      );
     };
 
     recognition.onresult = event => {
       let interim = "";
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i++
+      ) {
+        const result =
+          event.results[i];
+
         if (result.isFinal) {
-          finalTranscript += result[0].transcript + " ";
+          finalTranscript +=
+            result[0].transcript + " ";
         } else {
-          interim += result[0].transcript;
+          interim +=
+            result[0].transcript;
         }
       }
 
-      setText((finalTranscript + interim).trim());
+      setText(
+        (
+          finalTranscript +
+          interim
+        ).trim()
+      );
     };
 
     recognition.onerror = event => {
       setListening(false);
+
       setVoiceStatus(
         event.error === "not-allowed"
           ? "Autorise le microphone dans les paramètres du navigateur."
@@ -383,6 +575,7 @@ function App() {
 
     recognition.onend = () => {
       setListening(false);
+
       setVoiceStatus(
         finalTranscript.trim()
           ? "Ta question vocale a été transcrite."
@@ -394,70 +587,118 @@ function App() {
       recognition.start();
     } catch (_) {
       setListening(false);
-      setVoiceStatus("Impossible de démarrer le microphone. Réessaie.");
+
+      setVoiceStatus(
+        "Impossible de démarrer le microphone. Réessaie."
+      );
     }
   }
 
   async function handleFile(file) {
     setError("");
+
     if (!file) return;
 
     const type = file.type;
-    const name = file.name || "document";
-    const lowerName = name.toLowerCase();
+    const name =
+      file.name || "document";
+
+    const lowerName =
+      name.toLowerCase();
 
     try {
-      if (type === "application/pdf" || lowerName.endsWith(".pdf")) {
-        if (file.size > MAX_PDF_SIZE) {
-          setError("Le PDF doit peser 3 Mo maximum. Essaie de le compresser.");
+      if (
+        type === "application/pdf" ||
+        lowerName.endsWith(".pdf")
+      ) {
+        if (
+          file.size >
+          MAX_PDF_SIZE
+        ) {
+          setError(
+            "Le PDF doit peser 3 Mo maximum. Essaie de le compresser."
+          );
           return;
         }
 
-        const dataUrl = await readAsDataURL(file);
+        const dataUrl =
+          await readAsDataURL(file);
+
         setDocument({
           name,
-          mimeType: "application/pdf",
-          data: dataUrl.split(",")[1]
+          mimeType:
+            "application/pdf",
+          data:
+            dataUrl.split(",")[1]
         });
+
         setDocumentText("");
         setImage(null);
         setImagePreview("");
         setFileName(name);
+
         return;
       }
 
-      if (type === "text/plain" || lowerName.endsWith(".txt")) {
-        if (file.size > MAX_TEXT_SIZE) {
-          setError("Le fichier texte doit peser 100 Ko maximum.");
+      if (
+        type === "text/plain" ||
+        lowerName.endsWith(".txt")
+      ) {
+        if (
+          file.size >
+          MAX_TEXT_SIZE
+        ) {
+          setError(
+            "Le fichier texte doit peser 100 Ko maximum."
+          );
           return;
         }
 
-        const content = await file.text();
+        const content =
+          await file.text();
+
         setDocument(null);
         setDocumentText(content);
         setImage(null);
         setImagePreview("");
         setFileName(name);
+
         return;
       }
 
-      const imageTypes = ["image/jpeg", "image/png", "image/webp"];
+      const imageTypes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+      ];
 
-      if (imageTypes.includes(type)) {
-        if (file.size > MAX_IMAGE_SIZE) {
-          setError("L'image doit peser 4 Mo maximum.");
+      if (
+        imageTypes.includes(type)
+      ) {
+        if (
+          file.size >
+          MAX_IMAGE_SIZE
+        ) {
+          setError(
+            "L'image doit peser 4 Mo maximum."
+          );
           return;
         }
 
-        const dataUrl = await readAsDataURL(file);
+        const dataUrl =
+          await readAsDataURL(file);
+
         setImage({
-          data: dataUrl.split(",")[1],
+          data:
+            dataUrl.split(",")[1],
           mimeType: type
         });
+
         setImagePreview(dataUrl);
         setDocument(null);
         setDocumentText("");
         setFileName(name);
+
         return;
       }
 
@@ -465,7 +706,9 @@ function App() {
         "Format non pris en charge. Choisis un PDF, un fichier TXT ou une image JPG, PNG ou WebP."
       );
     } catch (_) {
-      setError("Impossible de lire ce fichier. Essaie un autre document.");
+      setError(
+        "Impossible de lire ce fichier. Essaie un autre document."
+      );
     }
   }
 
@@ -483,29 +726,37 @@ function App() {
 
   function createNewConversation() {
     stopSpeaking();
+
     try {
       recognitionRef.current?.stop();
     } catch (_) {}
 
-    const conversation = makeConversation({
-      grade,
-      serie,
-      subject,
-      difficulty,
-      mode
-    });
+    const conversation =
+      makeConversation({
+        grade,
+        serie,
+        subject,
+        difficulty,
+        mode
+      });
 
     setSavedData(previous => ({
       conversations: [
         conversation,
         ...previous.conversations
-      ].slice(0, MAX_SAVED_CONVERSATIONS),
-      activeId: conversation.id
+      ].slice(
+        0,
+        MAX_SAVED_CONVERSATIONS
+      ),
+      activeId:
+        conversation.id
     }));
 
     setText("");
     setError("");
+
     removeFile();
+
     setVoiceStatus("");
     setLoading(false);
     setLoadingConversationId(null);
@@ -513,160 +764,324 @@ function App() {
 
   function openConversation(conversation) {
     stopSpeaking();
+
     try {
       recognitionRef.current?.stop();
     } catch (_) {}
 
+    const conversationGrade =
+      conversation.grade ||
+      "Terminale";
+
+    const conversationSerie =
+      normalizeSerie(
+        conversationGrade,
+        conversation.serie
+      );
+
     setSavedData(previous => ({
       ...previous,
-      activeId: conversation.id
+      activeId:
+        conversation.id
     }));
 
-    setGrade(conversation.grade || "Terminale");
-    setSerie(conversation.serie || "D");
-    setSubject(conversation.subject || "Mathématiques");
-    setDifficulty(conversation.difficulty || "détaillé");
-    setMode(conversation.mode || "explication");
+    setGrade(conversationGrade);
+    setSerie(conversationSerie);
+
+    setSubject(
+      conversation.subject ||
+      "Mathématiques"
+    );
+
+    setDifficulty(
+      conversation.difficulty ||
+      "détaillé"
+    );
+
+    setMode(
+      conversation.mode ||
+      "explication"
+    );
 
     setText("");
     setError("");
+
     removeFile();
+
     setVoiceStatus("");
   }
 
   function deleteConversation(id) {
-    const remaining = conversations.filter(c => c.id !== id);
+    const remaining =
+      conversations.filter(
+        c => c.id !== id
+      );
 
     if (remaining.length === 0) {
-      const fresh = makeConversation({ grade, serie, subject, difficulty, mode });
-      setSavedData({ conversations: [fresh], activeId: fresh.id });
+      const fresh =
+        makeConversation({
+          grade,
+          serie,
+          subject,
+          difficulty,
+          mode
+        });
+
+      setSavedData({
+        conversations: [fresh],
+        activeId: fresh.id
+      });
+
       setText("");
       setError("");
       removeFile();
+
       return;
     }
 
     const nextActiveId =
-      savedData.activeId === id ? remaining[0].id : savedData.activeId;
+      savedData.activeId === id
+        ? remaining[0].id
+        : savedData.activeId;
 
     setSavedData({
       conversations: remaining,
       activeId: nextActiveId
     });
 
-    if (savedData.activeId === id) {
-      const next = remaining.find(c => c.id === nextActiveId);
-      if (next) openConversation(next);
+    if (
+      savedData.activeId === id
+    ) {
+      const next =
+        remaining.find(
+          c =>
+            c.id ===
+            nextActiveId
+        );
+
+      if (next) {
+        openConversation(next);
+      }
     }
+  }
+
+  function handleGradeChange(newGrade) {
+    setGrade(newGrade);
+
+    /*
+     * Pour CP1 à 3e, aucune série n'existe.
+     * On force donc automatiquement "Non précisée".
+     */
+    if (!gradeHasSeries(newGrade)) {
+      setSerie("Non précisée");
+      return;
+    }
+
+    /*
+     * Si on passe à une classe avec série,
+     * on conserve la série actuelle si elle est valide.
+     * Sinon, on utilise "Non précisée".
+     */
+    setSerie(currentSerie =>
+      SERIES.includes(currentSerie)
+        ? currentSerie
+        : "Non précisée"
+    );
   }
 
   async function submitQuestion(event) {
     event?.preventDefault();
+
     setError("");
     setVoiceStatus("");
+
     stopSpeaking();
 
-    if (!text.trim() && !image && !document && !documentText.trim()) {
-      setError("Écris une question ou ajoute un fichier.");
+    if (
+      !text.trim() &&
+      !image &&
+      !document &&
+      !documentText.trim()
+    ) {
+      setError(
+        "Écris une question ou ajoute un fichier."
+      );
       return;
     }
 
-    const conversationId = activeConversation.id;
-    const currentMessages = activeConversation.messages || [];
+    const conversationId =
+      activeConversation.id;
+
+    const currentMessages =
+      activeConversation.messages ||
+      [];
+
+    /*
+     * Sécurité supplémentaire :
+     * même si une ancienne conversation
+     * contient une série pour une classe
+     * de CP1 à 3e, elle sera ignorée.
+     */
+    const effectiveSerie =
+      normalizeSerie(
+        grade,
+        serie
+      );
 
     const fullText = [
       text.trim(),
+
       documentText.trim()
         ? `CONTENU DU FICHIER ${fileName} :\n${documentText.trim()}`
         : ""
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const visibleQuestion = [
       text.trim(),
-      fileName ? `📎 Fichier joint : ${fileName}` : "",
-      documentText.trim() ? "(Contenu du fichier texte transmis à Klasévia)" : ""
-    ].filter(Boolean).join("\n\n") || "Analyse le fichier joint.";
+
+      fileName
+        ? `📎 Fichier joint : ${fileName}`
+        : "",
+
+      documentText.trim()
+        ? "(Contenu du fichier texte transmis à Klasévia)"
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n\n") ||
+      "Analyse le fichier joint.";
 
     const userMessage = {
       role: "user",
       content: visibleQuestion,
       id: makeId(),
-      createdAt: new Date().toISOString()
+      createdAt:
+        new Date().toISOString()
     };
 
-    // Les anciens messages servent de contexte. Les fichiers précédents
-    // ne sont pas conservés dans l'historique.
-    const history = currentMessages
-      .filter(m => m.role === "user" || m.role === "assistant")
-      .map(m => ({ role: m.role, content: m.content }));
+    /*
+     * Les anciens messages servent de contexte.
+     * Les fichiers précédents ne sont pas conservés
+     * dans l'historique.
+     */
+    const history =
+      currentMessages
+        .filter(
+          m =>
+            m.role === "user" ||
+            m.role === "assistant"
+        )
+        .map(m => ({
+          role: m.role,
+          content: m.content
+        }));
 
     const title =
-      activeConversation.title === "Nouvelle conversation"
-        ? (text.trim() || fileName || "Nouvelle conversation").slice(0, 55)
+      activeConversation.title ===
+      "Nouvelle conversation"
+        ? (
+            text.trim() ||
+            fileName ||
+            "Nouvelle conversation"
+          ).slice(0, 55)
         : activeConversation.title;
 
-    updateConversation(conversationId, c => ({
-      ...c,
-      title,
-      grade,
-      serie,
-      subject,
-      difficulty,
-      mode,
-      updatedAt: new Date().toISOString(),
-      messages: [...c.messages, userMessage]
-    }));
+    updateConversation(
+      conversationId,
+      c => ({
+        ...c,
+        title,
+        grade,
+        serie: effectiveSerie,
+        subject,
+        difficulty,
+        mode,
+        updatedAt:
+          new Date().toISOString(),
+        messages: [
+          ...c.messages,
+          userMessage
+        ]
+      })
+    );
 
     setText("");
     removeFile();
+
     setLoading(true);
-    setLoadingConversationId(conversationId);
+    setLoadingConversationId(
+      conversationId
+    );
 
     try {
-      const response = await fetch("/api/tutor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode,
-          grade,
-          serie,
-          subject,
-          difficulty,
-          text: fullText || "Analyse le fichier joint et explique son contenu.",
-          image,
-          document,
-          history
-        })
-      });
+      const response =
+        await fetch("/api/tutor", {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            mode,
+            grade,
+            /*
+             * Klasévia recevra toujours
+             * "Non précisée" pour CP1 à 3e.
+             */
+            serie: effectiveSerie,
+            subject,
+            difficulty,
+            text:
+              fullText ||
+              "Analyse le fichier joint et explique son contenu.",
+            image,
+            document,
+            history
+          })
+        });
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data?.error || "Le service IA est temporairement indisponible."
+          data?.error ||
+            "Le service IA est temporairement indisponible."
         );
       }
 
       if (!data?.answer) {
-        throw new Error("Aucune réponse n'a été reçue.");
+        throw new Error(
+          "Aucune réponse n'a été reçue."
+        );
       }
 
       const assistantMessage = {
         role: "assistant",
         content: data.answer,
         id: makeId(),
-        createdAt: new Date().toISOString()
+        createdAt:
+          new Date().toISOString()
       };
 
-      updateConversation(conversationId, c => ({
-        ...c,
-        updatedAt: new Date().toISOString(),
-        messages: [...c.messages, assistantMessage]
-      }));
+      updateConversation(
+        conversationId,
+        c => ({
+          ...c,
+          updatedAt:
+            new Date().toISOString(),
+          messages: [
+            ...c.messages,
+            assistantMessage
+          ]
+        })
+      );
     } catch (err) {
       setError(
         err?.message ||
-        "Impossible de contacter Klasévia. Vérifie ta connexion Internet."
+          "Impossible de contacter Klasévia. Vérifie ta connexion Internet."
       );
     } finally {
       setLoading(false);
@@ -676,9 +1091,12 @@ function App() {
 
   function clearDraft() {
     stopSpeaking();
+
     setText("");
     setError("");
+
     removeFile();
+
     setVoiceStatus("");
   }
 
@@ -727,8 +1145,10 @@ function App() {
 
       <header className="k-hero">
         <h1>📚 Klasévia</h1>
+
         <p>
-          Ton compagnon d’apprentissage : pose tes questions, partage tes
+          Ton compagnon d’apprentissage :
+          pose tes questions, partage tes
           documents et progresse à ton rythme.
         </p>
       </header>
@@ -742,45 +1162,80 @@ function App() {
           <button
             type="button"
             className="k-btn k-sidebar-new"
-            onClick={createNewConversation}
+            onClick={
+              createNewConversation
+            }
             disabled={loading}
           >
             ＋ Nouvelle conversation
           </button>
 
           <p className="k-note">
-            Tes discussions sont sauvegardées dans ce navigateur.
+            Tes discussions sont
+            sauvegardées dans ce navigateur.
           </p>
 
           <div className="k-history-list">
             {[...conversations]
-              .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.updatedAt
+                  ) -
+                  new Date(
+                    a.updatedAt
+                  )
+              )
               .map(conversation => (
-                <div className="k-history-item" key={conversation.id}>
+                <div
+                  className="k-history-item"
+                  key={conversation.id}
+                >
                   <button
                     type="button"
                     className={`k-history-open ${
-                      conversation.id === savedData.activeId ? "active" : ""
+                      conversation.id ===
+                      savedData.activeId
+                        ? "active"
+                        : ""
                     }`}
-                    onClick={() => openConversation(conversation)}
+                    onClick={() =>
+                      openConversation(
+                        conversation
+                      )
+                    }
                     disabled={loading}
                   >
-                    <span className="k-history-name">{conversation.title}</span>
-                    <span className="k-history-date">
-                      {formatDate(conversation.updatedAt)}
+                    <span className="k-history-name">
+                      {conversation.title}
                     </span>
+
                     <span className="k-history-date">
-                      {conversation.messages.length} message(s)
+                      {formatDate(
+                        conversation.updatedAt
+                      )}
+                    </span>
+
+                    <span className="k-history-date">
+                      {conversation.messages.length}{" "}
+                      message(s)
                     </span>
                   </button>
+
                   <button
                     type="button"
                     className="k-delete"
                     title="Supprimer cette conversation"
                     aria-label={`Supprimer ${conversation.title}`}
                     onClick={() => {
-                      if (window.confirm("Supprimer définitivement cette conversation ?")) {
-                        deleteConversation(conversation.id);
+                      if (
+                        window.confirm(
+                          "Supprimer définitivement cette conversation ?"
+                        )
+                      ) {
+                        deleteConversation(
+                          conversation.id
+                        );
                       }
                     }}
                     disabled={loading}
@@ -794,75 +1249,159 @@ function App() {
 
         <div>
           <section className="k-card">
-            <h2>Préparons ta réponse</h2>
+            <h2>
+              Préparons ta réponse
+            </h2>
 
             <div className="k-grid">
               <div className="k-field">
-                <label htmlFor="k-grade">Classe</label>
+                <label htmlFor="k-grade">
+                  Classe
+                </label>
+
                 <select
                   id="k-grade"
                   value={grade}
-                  onChange={e => setGrade(e.target.value)}
+                  onChange={e =>
+                    handleGradeChange(
+                      e.target.value
+                    )
+                  }
                 >
-                  {CLASSES.map(item => <option key={item}>{item}</option>)}
+                  {CLASSES.map(item => (
+                    <option key={item}>
+                      {item}
+                    </option>
+                  ))}
                 </select>
               </div>
 
-              <div className="k-field">
-                <label htmlFor="k-serie">Série</label>
-                <select
-                  id="k-serie"
-                  value={serie}
-                  onChange={e => setSerie(e.target.value)}
-                >
-                  {SERIES.map(item => <option key={item}>{item}</option>)}
-                </select>
-              </div>
+              {/*
+               * Le champ Série n'est affiché
+               * que pour les classes qui
+               * peuvent réellement avoir une série.
+               */}
+              {gradeHasSeries(grade) && (
+                <div className="k-field">
+                  <label htmlFor="k-serie">
+                    Série
+                  </label>
+
+                  <select
+                    id="k-serie"
+                    value={serie}
+                    onChange={e =>
+                      setSerie(
+                        e.target.value
+                      )
+                    }
+                  >
+                    {SERIES.map(item => (
+                      <option
+                        key={item}
+                      >
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="k-field">
-                <label htmlFor="k-subject">Matière</label>
+                <label htmlFor="k-subject">
+                  Matière
+                </label>
+
                 <select
                   id="k-subject"
                   value={subject}
-                  onChange={e => setSubject(e.target.value)}
+                  onChange={e =>
+                    setSubject(
+                      e.target.value
+                    )
+                  }
                 >
-                  {SUBJECTS.map(item => <option key={item}>{item}</option>)}
+                  {SUBJECTS.map(item => (
+                    <option
+                      key={item}
+                    >
+                      {item}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div className="k-field">
-                <label htmlFor="k-mode">Type d'aide</label>
+                <label htmlFor="k-mode">
+                  Type d'aide
+                </label>
+
                 <select
                   id="k-mode"
                   value={mode}
-                  onChange={e => setMode(e.target.value)}
+                  onChange={e =>
+                    setMode(
+                      e.target.value
+                    )
+                  }
                 >
-                  <option value="explication">M'expliquer et m'accompagner</option>
-                  <option value="synthese">Synthétiser un cours</option>
+                  <option value="explication">
+                    M'expliquer et
+                    m'accompagner
+                  </option>
+
+                  <option value="synthese">
+                    Synthétiser un cours
+                  </option>
                 </select>
               </div>
 
               <div className="k-field">
-                <label htmlFor="k-detail">Niveau de détail</label>
+                <label htmlFor="k-detail">
+                  Niveau de détail
+                </label>
+
                 <select
                   id="k-detail"
                   value={difficulty}
-                  onChange={e => setDifficulty(e.target.value)}
+                  onChange={e =>
+                    setDifficulty(
+                      e.target.value
+                    )
+                  }
                 >
-                  <option value="simple">Simple et accessible</option>
-                  <option value="normal">Normal</option>
-                  <option value="détaillé">Détaillé, étape par étape</option>
+                  <option value="simple">
+                    Simple et accessible
+                  </option>
+
+                  <option value="normal">
+                    Normal
+                  </option>
+
+                  <option value="détaillé">
+                    Détaillé, étape par étape
+                  </option>
                 </select>
               </div>
             </div>
 
             <form onSubmit={submitQuestion}>
-              <div className="k-field" style={{ marginTop: 16 }}>
-                <label htmlFor="k-question">Ta question ou ton cours</label>
+              <div
+                className="k-field"
+                style={{ marginTop: 16 }}
+              >
+                <label htmlFor="k-question">
+                  Ta question ou ton cours
+                </label>
+
                 <textarea
                   id="k-question"
                   value={text}
-                  onChange={e => setText(e.target.value)}
+                  onChange={e =>
+                    setText(
+                      e.target.value
+                    )
+                  }
                   placeholder="Pose une question ou continue la discussion précédente…"
                 />
               </div>
@@ -871,28 +1410,40 @@ function App() {
                 <button
                   type="button"
                   className="k-btn secondary"
-                  onClick={toggleListening}
+                  onClick={
+                    toggleListening
+                  }
                   disabled={loading}
                 >
-                  {listening ? "⏹ Arrêter le micro" : "🎙 Question vocale"}
+                  {listening
+                    ? "⏹ Arrêter le micro"
+                    : "🎙 Question vocale"}
                 </button>
 
                 <button
                   type="button"
                   className="k-btn secondary"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() =>
+                    fileInputRef.current?.click()
+                  }
                   disabled={loading}
                 >
-                  📎 Ajouter un fichier ou une photo
+                  📎 Ajouter un fichier
+                  ou une photo
                 </button>
 
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".pdf,.txt,application/pdf,text/plain,image/jpeg,image/png,image/webp"
-                  style={{ display: "none" }}
+                  style={{
+                    display: "none"
+                  }}
                   onChange={e => {
-                    handleFile(e.target.files?.[0]);
+                    handleFile(
+                      e.target.files?.[0]
+                    );
+
                     e.target.value = "";
                   }}
                 />
@@ -900,12 +1451,18 @@ function App() {
 
               {fileName && (
                 <div className="k-status">
-                  📄 Fichier sélectionné : <strong>{fileName}</strong>
+                  📄 Fichier sélectionné :{" "}
+                  <strong>
+                    {fileName}
+                  </strong>
+
                   <div className="k-actions">
                     <button
                       type="button"
                       className="k-btn secondary"
-                      onClick={removeFile}
+                      onClick={
+                        removeFile
+                      }
                     >
                       Retirer le fichier
                     </button>
@@ -922,19 +1479,30 @@ function App() {
               )}
 
               <p className="k-note">
-                Formats acceptés : PDF (3 Mo maximum), TXT (100 Ko maximum),
-                images JPG, PNG ou WebP (4 Mo maximum).
+                Formats acceptés : PDF
+                (3 Mo maximum), TXT
+                (100 Ko maximum), images
+                JPG, PNG ou WebP
+                (4 Mo maximum).
               </p>
 
               <div className="k-actions">
-                <button className="k-btn" type="submit" disabled={loading}>
-                  {loading ? "Klasévia réfléchit…" : "✨ Envoyer ma question"}
+                <button
+                  className="k-btn"
+                  type="submit"
+                  disabled={loading}
+                >
+                  {loading
+                    ? "Klasévia réfléchit…"
+                    : "✨ Envoyer ma question"}
                 </button>
 
                 <button
                   className="k-btn secondary"
                   type="button"
-                  onClick={clearDraft}
+                  onClick={
+                    clearDraft
+                  }
                   disabled={loading}
                 >
                   Effacer le brouillon
@@ -942,55 +1510,105 @@ function App() {
               </div>
             </form>
 
-            {error && <div className="k-error" role="alert">{error}</div>}
+            {error && (
+              <div
+                className="k-error"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+
             {voiceStatus && (
-              <div className="k-status" aria-live="polite">{voiceStatus}</div>
+              <div
+                className="k-status"
+                aria-live="polite"
+              >
+                {voiceStatus}
+              </div>
             )}
           </section>
 
           <section className="k-card">
-            <h2>💬 Conversation</h2>
+            <h2>
+              💬 Conversation
+            </h2>
 
-            {messages.length === 0 && !loading && (
-              <div className="k-empty">
-                <p>Cette conversation est encore vide.</p>
-                <p>Pose ta première question pour commencer.</p>
-              </div>
-            )}
+            {messages.length === 0 &&
+              !loading && (
+                <div className="k-empty">
+                  <p>
+                    Cette conversation
+                    est encore vide.
+                  </p>
+
+                  <p>
+                    Pose ta première
+                    question pour
+                    commencer.
+                  </p>
+                </div>
+              )}
 
             {messages.map(message => (
               <article
                 key={message.id}
                 className={`k-message ${
-                  message.role === "user" ? "user" : "assistant"
+                  message.role === "user"
+                    ? "user"
+                    : "assistant"
                 }`}
               >
                 <div className="k-message-label">
-                  {message.role === "user" ? "🙋 Ta question" : "📚 Klasévia"}
+                  {message.role === "user"
+                    ? "🙋 Ta question"
+                    : "📚 Klasévia"}
                 </div>
 
                 <div className="k-message-content">
-                  {message.role === "assistant" ? (
+                  {message.role ===
+                  "assistant" ? (
                     <ReactMarkdown
-                      remarkPlugins={[remarkMath]}
-                      rehypePlugins={[rehypeKatex]}
+                      remarkPlugins={[
+                        remarkMath
+                      ]}
+                      rehypePlugins={[
+                        rehypeKatex
+                      ]}
                     >
-                      {message.content}
+                      {
+                        message.content
+                      }
                     </ReactMarkdown>
                   ) : (
-                    <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                      {message.content}
+                    <p
+                      style={{
+                        whiteSpace:
+                          "pre-wrap",
+                        margin: 0
+                      }}
+                    >
+                      {
+                        message.content
+                      }
                     </p>
                   )}
                 </div>
 
-                {message.role === "assistant" && (
+                {message.role ===
+                  "assistant" && (
                   <div className="k-actions">
                     <button
                       type="button"
                       className="k-btn secondary"
-                      onClick={() => startSpeaking(message.content)}
-                      disabled={!voiceSupported}
+                      onClick={() =>
+                        startSpeaking(
+                          message.content
+                        )
+                      }
+                      disabled={
+                        !voiceSupported
+                      }
                     >
                       🔊 Lire cette réponse
                     </button>
@@ -1000,8 +1618,13 @@ function App() {
             ))}
 
             {loading && (
-              <div className="k-status" aria-live="polite">
-                Klasévia prépare ta réponse. Patiente un instant…
+              <div
+                className="k-status"
+                aria-live="polite"
+              >
+                Klasévia prépare ta
+                réponse. Patiente un
+                instant…
               </div>
             )}
 
@@ -1011,16 +1634,25 @@ function App() {
                   <button
                     type="button"
                     className="k-btn"
-                    onClick={() => startSpeaking(answer)}
-                    disabled={!voiceSupported}
+                    onClick={() =>
+                      startSpeaking(
+                        answer
+                      )
+                    }
+                    disabled={
+                      !voiceSupported
+                    }
                   >
-                    🔊 Écouter la dernière réponse à {SPEED}×
+                    🔊 Écouter la dernière
+                    réponse à {SPEED}×
                   </button>
                 ) : (
                   <button
                     type="button"
                     className="k-btn stop"
-                    onClick={stopSpeaking}
+                    onClick={
+                      stopSpeaking
+                    }
                   >
                     ⏹ Arrêter la lecture
                   </button>
@@ -1029,29 +1661,46 @@ function App() {
             )}
 
             {availableVoice && (
-              <p className="k-note">Voix détectée : {availableVoice}</p>
+              <p className="k-note">
+                Voix détectée :{" "}
+                {availableVoice}
+              </p>
             )}
 
             {!voiceSupported && (
               <p className="k-note">
-                Pour écouter les réponses, essaie Chrome sur Android.
+                Pour écouter les
+                réponses, essaie Chrome
+                sur Android.
               </p>
             )}
 
             {!recognitionSupported && (
               <p className="k-note">
-                Tu peux dicter ta question avec le microphone du clavier Android.
+                Tu peux dicter ta
+                question avec le
+                microphone du clavier
+                Android.
               </p>
             )}
           </section>
         </div>
       </div>
 
-      <footer className="k-note" style={{ textAlign: "center", padding: 12 }}>
-        Klasévia · Apprendre, comprendre et progresser.
+      <footer
+        className="k-note"
+        style={{
+          textAlign: "center",
+          padding: 12
+        }}
+      >
+        Klasévia · Apprendre,
+        comprendre et progresser.
       </footer>
     </main>
   );
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+createRoot(
+  document.getElementById("root")
+).render(<App />);
