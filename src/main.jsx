@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -7,651 +7,790 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "./style.css";
 
-const grades = [
+const CLASSES = [
   "CP1", "CP2", "CE1", "CE2", "CM1", "CM2",
-  "6e", "5e", "4e", "3e", "Seconde", "Première", "Terminale"
+  "6e", "5e", "4e", "3e",
+  "Seconde", "Première", "Terminale"
 ];
 
-const subjects = [
-  "Mathématiques", "Français", "SVT", "Physique-Chimie",
-  "Histoire-Géographie", "Anglais", "Philosophie", "Autre"
+const SUBJECTS = [
+  "Mathématiques", "Français", "Anglais",
+  "Physique-Chimie", "SVT", "Histoire-Géographie",
+  "Philosophie", "Informatique", "Économie",
+  "Éducation civique", "Autre"
 ];
 
-const series = ["A", "C", "D"];
+const SERIES = [
+  "Non précisée", "Tronc commun", "A1", "A2",
+  "C", "D", "A", "F", "G", "Autre"
+];
+
+const SPEED = 1.25;
+
+function getSpeechRecognition() {
+  if (typeof window === "undefined") return null;
+  return window.SpeechRecognition ||
+    window.webkitSpeechRecognition ||
+    null;
+}
+
+function chooseFrenchVoice(voices) {
+  const frenchVoices = voices.filter((voice) =>
+    /^fr([-_]|$)/i.test(voice.lang || "")
+  );
+
+  if (!frenchVoices.length) return null;
+
+  // Favoriser une voix française naturelle si le téléphone en propose une.
+  const preferred = frenchVoices.find((voice) =>
+    /natural|naturel|neural|premium|enhanced/i.test(voice.name)
+  );
+
+  if (preferred) return preferred;
+
+  return frenchVoices.find((voice) =>
+    /^fr-FR$/i.test(voice.lang)
+  ) || frenchVoices[0];
+}
+
+function splitSpeech(text, maxLength = 220) {
+  const cleaned = text
+    .replace(/```[\s\S]*?```/g, " bloc de code omis ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\$|\\\[|\\\])/g, " ")
+    .replace(/[*_#`>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return [];
+
+  const sentences = cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleaned];
+  const chunks = [];
+  let current = "";
+
+  for (const sentence of sentences) {
+    const part = sentence.trim();
+    if (!part) continue;
+
+    if ((current + " " + part).trim().length <= maxLength) {
+      current = (current + " " + part).trim();
+    } else {
+      if (current) chunks.push(current);
+
+      if (part.length <= maxLength) {
+        current = part;
+      } else {
+        const words = part.split(/\s+/);
+        current = "";
+
+        for (const word of words) {
+          if ((current + " " + word).trim().length > maxLength) {
+            if (current) chunks.push(current);
+            current = word;
+          } else {
+            current = (current + " " + word).trim();
+          }
+        }
+      }
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
 
 function App() {
-  const [grade, setGrade] = useState("3e");
+  const [grade, setGrade] = useState("Terminale");
   const [serie, setSerie] = useState("D");
   const [subject, setSubject] = useState("Mathématiques");
-  const [mode, setMode] = useState("synthese");
-  const [course, setCourse] = useState("");
-  const [question, setQuestion] = useState("");
-  const [difficulty, setDifficulty] = useState("normal");
-  const [result, setResult] = useState("");
+  const [difficulty, setDifficulty] = useState("détaillé");
+  const [mode, setMode] = useState("explication");
+  const [text, setText] = useState("");
+  const [image, setImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [image, setImage] = useState(null);
-  const [imageName, setImageName] = useState("");
-  const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("");
+  const [availableVoice, setAvailableVoice] = useState("");
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [recognitionSupported, setRecognitionSupported] = useState(false);
 
-  const fileRef = useRef(null);
-  const cameraRef = useRef(null);
+  const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
-  const utteranceRef = useRef(null);
-  const speakQueueRef = useRef([]);
-  const speakIndexRef = useRef(0);
+  const speechRunRef = useRef(0);
+  const speechQueueRef = useRef([]);
+  const speechIndexRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
+
+    const synth = window.speechSynthesis;
+    const Recognition = getSpeechRecognition();
+
+    setVoiceSupported(Boolean(synth && window.SpeechSynthesisUtterance));
+    setRecognitionSupported(Boolean(Recognition));
+
+    function updateVoice() {
+      if (!synth) return;
+      const voice = chooseFrenchVoice(synth.getVoices());
+      setAvailableVoice(
+        voice
+          ? `${voice.name} (${voice.lang})`
+          : "Voix française du téléphone non détectée"
+      );
+    }
+
+    if (synth) {
+      updateVoice();
+      synth.addEventListener?.("voiceschanged", updateVoice);
+    }
+
     return () => {
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
+      mountedRef.current = false;
+      speechRunRef.current += 1;
+
+      if (synth) {
+        synth.cancel();
+        synth.removeEventListener?.("voiceschanged", updateVoice);
       }
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
+
+      try {
+        recognitionRef.current?.stop();
+      } catch (_) {}
     };
   }, []);
 
   function stopSpeaking() {
+    speechRunRef.current += 1;
+    speechQueueRef.current = [];
+    speechIndexRef.current = 0;
+
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
-    speakQueueRef.current = [];
-    speakIndexRef.current = 0;
-    utteranceRef.current = null;
+
     setSpeaking(false);
+    setVoiceStatus("");
   }
 
-  function cleanForSpeech(text) {
-    return text
-      .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
-      .replace(/\$([^$]+)\$/g, "$1")
-      .replace(/\\\[([\s\S]*?)\\\]/g, "$1")
-      .replace(/\\\(([\s\S]*?)\\\)/g, "$1")
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/`([^`]+)`/g, "$1")
-      .replace(/^#{1,6}\s*/gm, "")
-      .replace(/^\s*[-*+]\s+/gm, "")
-      .replace(/^\s*\d+[.)]\s+/gm, "")
-      .replace(/\*\*(.*?)\*\*/g, "$1")
-      .replace(/__(.*?)__/g, "$1")
-      .replace(/[*_~#]/g, " ")
-      .replace(/\\(?:frac|sqrt|Delta|pi|times|neq|leq|geq|cdot|pm)\b/g, " ")
-      .replace(/[{}]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
+  function speakNext(runId) {
+    if (runId !== speechRunRef.current) return;
 
-  function speakNext() {
-    const queue = speakQueueRef.current;
-    const index = speakIndexRef.current;
+    const synth = window.speechSynthesis;
+    const chunks = speechQueueRef.current;
+    const index = speechIndexRef.current;
 
-    if (index >= queue.length) {
+    if (index >= chunks.length) {
       setSpeaking(false);
-      utteranceRef.current = null;
+      setVoiceStatus("");
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(queue[index]);
-    utterance.lang = "fr-FR";
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    const voice = chooseFrenchVoice(synth.getVoices());
+
+    utterance.lang = voice?.lang || "fr-FR";
+    if (voice) utterance.voice = voice;
+
+    utterance.rate = SPEED;
+    utterance.pitch = 1.05;
+    utterance.volume = 1;
 
     utterance.onend = () => {
-      speakIndexRef.current += 1;
-      speakNext();
+      if (runId !== speechRunRef.current) return;
+      speechIndexRef.current += 1;
+      speakNext(runId);
     };
 
     utterance.onerror = (event) => {
+      if (runId !== speechRunRef.current) return;
       if (event.error === "canceled" || event.error === "interrupted") {
         return;
       }
+
       setSpeaking(false);
-      setError(
-        "La lecture vocale a rencontré un problème. Vérifie la synthèse vocale française dans les paramètres du téléphone."
+      setVoiceStatus(
+        "La lecture a rencontré un problème. Essaie de relancer la lecture."
       );
     };
 
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
+    synth.speak(utterance);
   }
 
-  function speak() {
-    if (!result) {
-      setError("Génère d'abord une réponse à écouter.");
+  function startSpeaking() {
+    if (!answer.trim()) {
+      setVoiceStatus("Aucune réponse à lire pour le moment.");
       return;
     }
 
     if (!("speechSynthesis" in window)) {
-      setError("La lecture vocale n'est pas disponible dans ce navigateur.");
-      return;
-    }
-
-    stopSpeaking();
-    setError("");
-
-    const text = cleanForSpeech(result);
-    if (!text) {
-      setError("Il n'y a pas de texte lisible dans cette réponse.");
-      return;
-    }
-
-    const sentences = text.match(/[^.!?;]+[.!?;]*/g) || [text];
-    const chunks = [];
-    let current = "";
-
-    for (const sentence of sentences) {
-      const part = sentence.trim();
-      if (!part) continue;
-
-      if ((current + " " + part).trim().length > 180) {
-        if (current) chunks.push(current.trim());
-        current = part;
-      } else {
-        current = (current + " " + part).trim();
-      }
-    }
-
-    if (current) chunks.push(current.trim());
-
-    speakQueueRef.current = chunks;
-    speakIndexRef.current = 0;
-    setSpeaking(true);
-    speakNext();
-  }
-
-  function startVoiceInput() {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setError(
-        "La dictée vocale n'est pas disponible ici. Essaie Google Chrome ou utilise le micro du clavier de ton téléphone."
+      setVoiceStatus(
+        "La lecture vocale n'est pas disponible dans ce navigateur."
       );
       return;
     }
 
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    stopSpeaking();
+
+    const runId = speechRunRef.current;
+    speechQueueRef.current = splitSpeech(answer);
+    speechIndexRef.current = 0;
+
+    if (!speechQueueRef.current.length) {
+      setVoiceStatus("Aucun texte lisible dans cette réponse.");
+      return;
     }
 
-    const recognition = new SpeechRecognition();
+    setSpeaking(true);
+    setVoiceStatus(`Lecture en cours à ${SPEED}×`);
+
+    // Certains navigateurs Android conservent une ancienne file :
+    // on annule d'abord la lecture précédente, puis on démarre.
+    window.speechSynthesis.cancel();
+
+    // Démarrer directement après l'action de l'utilisateur.
+    speakNext(runId);
+  }
+
+  function toggleListening() {
+    if (listening) {
+      try {
+        recognitionRef.current?.stop();
+      } catch (_) {}
+      setListening(false);
+      setVoiceStatus("");
+      return;
+    }
+
+    const Recognition = getSpeechRecognition();
+
+    if (!Recognition) {
+      setVoiceStatus(
+        "La saisie vocale n'est pas prise en charge par ce navigateur. Tu peux utiliser le microphone du clavier Android."
+      );
+      return;
+    }
+
+    stopSpeaking();
+
+    const recognition = new Recognition();
     recognition.lang = "fr-FR";
-    recognition.interimResults = false;
     recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
+
+    let finalTranscript = "";
 
     recognition.onstart = () => {
       setListening(true);
-      setError("");
+      setVoiceStatus("Je t'écoute. Parle maintenant.");
     };
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      if (mode === "explication") {
-        setQuestion((previous) =>
-          previous ? previous + " " + transcript : transcript
-        );
-      } else {
-        setCourse((previous) =>
-          previous ? previous + " " + transcript : transcript
-        );
+      let interimTranscript = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript + " ";
+        } else {
+          interimTranscript += result[0].transcript;
+        }
       }
+
+      const combined = (finalTranscript + interimTranscript).trim();
+      if (combined) setText((previous) => {
+        const base = previous.trim();
+        return base ? `${base} ${combined}` : combined;
+      });
     };
 
-    recognition.onerror = () => {
-      setError(
-        "La dictée vocale a échoué. Vérifie l'autorisation du microphone ou utilise le micro du clavier."
-      );
+    recognition.onerror = (event) => {
       setListening(false);
+      setVoiceStatus(
+        event.error === "not-allowed"
+          ? "Autorise le microphone dans les paramètres du navigateur."
+          : "La reconnaissance vocale a échoué. Réessaie ou utilise le microphone du clavier."
+      );
     };
 
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => {
+      setListening(false);
+      setVoiceStatus(
+        finalTranscript.trim()
+          ? "Ta question vocale a été transcrite."
+          : ""
+      );
+    };
 
     try {
       recognition.start();
-    } catch {
+    } catch (_) {
       setListening(false);
-      setError("Impossible de démarrer le microphone. Réessaie.");
+      setVoiceStatus("Impossible de démarrer le microphone. Réessaie.");
     }
   }
 
-  function readImage(file) {
+  async function handleImage(file) {
+    setError("");
+    setImage(null);
+    setImagePreview("");
+
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setError("Choisis un fichier image, par exemple JPG, PNG ou WEBP.");
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/heic",
+      "image/heif"
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setError("Choisis une image JPG, PNG ou WebP compatible.");
       return;
     }
 
-    if (file.size > 8 * 1024 * 1024) {
-      setError("Cette image dépasse 8 Mo. Choisis une image plus légère.");
+    if (file.size > 5 * 1024 * 1024) {
+      setError("L'image doit peser moins de 5 Mo.");
       return;
     }
-
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      const comma = dataUrl.indexOf(",");
-      if (comma < 0) {
-        setError("Impossible de lire cette image. Essaie une autre photo.");
-        return;
-      }
-
-      setImage({
-        data: dataUrl.slice(comma + 1),
-        mimeType: file.type
-      });
-      setImageName(file.name || "Photo sélectionnée");
-      setError("");
-    };
-
-    reader.onerror = () => {
-      setError("La lecture de la photo a échoué. Réessaie.");
-    };
-
-    reader.readAsDataURL(file);
-  }
-
-  async function askAI() {
-    const text =
-      mode === "explication" ? question.trim() : course.trim();
-
-    if (!text && !image) {
-      setError(
-        mode === "explication"
-          ? "Écris ou dicte ta question, ou ajoute une photo."
-          : "Colle ton cours, dicte-le ou ajoute une photo."
-      );
-      return;
-    }
-
-    stopSpeaking();
-    setLoading(true);
-    setError("");
-    setResult("");
 
     try {
-      const payload = {
-        mode,
-        grade,
-        serie:
-          grade === "Première" || grade === "Terminale"
-            ? serie
-            : "Tronc commun",
-        subject,
-        difficulty,
-        text: text || "Analyse la photo jointe et aide-moi à comprendre son contenu."
-      };
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Lecture impossible"));
+        reader.readAsDataURL(file);
+      });
 
-      if (image) {
-        payload.image = image;
-      }
+      const base64 = String(data).split(",")[1];
 
+      setImage({
+        data: base64,
+        mimeType: file.type
+      });
+
+      setImagePreview(String(data));
+    } catch (_) {
+      setError("Impossible de lire cette image. Essaie une autre photo.");
+    }
+  }
+
+  async function submitQuestion(event) {
+    event?.preventDefault();
+    setError("");
+    setVoiceStatus("");
+    stopSpeaking();
+
+    if (!text.trim() && !image) {
+      setError("Écris une question ou ajoute une photo d'exercice.");
+      return;
+    }
+
+    setLoading(true);
+    setAnswer("");
+
+    try {
       const response = await fetch("/api/tutor", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          mode,
+          grade,
+          serie,
+          subject,
+          difficulty,
+          text: text.trim(),
+          image
+        })
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "La demande n'a pas abouti.");
+        throw new Error(
+          data?.error || "Le service IA est temporairement indisponible."
+        );
       }
 
-      setResult(data.answer || "Aucune réponse reçue. Réessaie.");
-    } catch (e) {
+      if (!data?.answer) {
+        throw new Error("Aucune réponse n'a été reçue.");
+      }
+
+      setAnswer(data.answer);
+    } catch (err) {
       setError(
-        e.message ||
-          "Connexion impossible. Vérifie Internet et la configuration du serveur."
+        err?.message ||
+        "Impossible de contacter Klasévia. Vérifie ta connexion Internet."
       );
     } finally {
       setLoading(false);
     }
   }
 
-  function newLesson() {
+  function clearConversation() {
     stopSpeaking();
-    setCourse("");
-    setQuestion("");
-    setImage(null);
-    setImageName("");
-    setResult("");
+    setText("");
+    setAnswer("");
     setError("");
-    if (fileRef.current) fileRef.current.value = "";
-    if (cameraRef.current) cameraRef.current.value = "";
+    setImage(null);
+    setImagePreview("");
+    setVoiceStatus("");
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand">
-          <div className="logo">K</div>
-          <div>
-            <b>Klasévia</b>
-            <small>Comprendre · S'exercer · Réussir</small>
-          </div>
-        </div>
-        <span className="country">
-          Pensé pour les élèves de Côte d’Ivoire 🇨🇮
-        </span>
+    <main className="klasevia-app">
+      <style>{`
+        .klasevia-app {
+          max-width: 900px;
+          margin: 0 auto;
+          padding: 18px;
+          color: #18352d;
+          font-family: system-ui, -apple-system, BlinkMacSystemFont,
+            "Segoe UI", sans-serif;
+        }
+        .k-hero {
+          background: linear-gradient(135deg,#e8f6ee,#f5fbf7);
+          border: 1px solid #d6e8dd;
+          border-radius: 22px;
+          padding: 24px;
+          margin-bottom: 18px;
+        }
+        .k-hero h1 { margin: 0 0 8px; font-size: 30px; }
+        .k-hero p { margin: 0; line-height: 1.6; }
+        .k-card {
+          background: #fff;
+          border: 1px solid #dce6df;
+          border-radius: 18px;
+          padding: 20px;
+          margin: 16px 0;
+          box-shadow: 0 4px 18px #19382b0a;
+        }
+        .k-grid {
+          display: grid;
+          grid-template-columns: repeat(2,minmax(0,1fr));
+          gap: 12px;
+        }
+        .k-field { display: flex; flex-direction: column; gap: 6px; }
+        .k-field label { font-size: 14px; font-weight: 650; }
+        .k-field select, .k-field textarea, .k-field input {
+          width: 100%;
+          box-sizing: border-box;
+          border: 1px solid #cbd9d0;
+          border-radius: 11px;
+          padding: 12px;
+          font: inherit;
+          background: white;
+          color: #18352d;
+        }
+        .k-field textarea { min-height: 145px; resize: vertical; }
+        .k-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+        .k-btn {
+          border: 0;
+          border-radius: 12px;
+          padding: 12px 16px;
+          background: #176c4c;
+          color: white;
+          font: inherit;
+          font-weight: 650;
+          cursor: pointer;
+        }
+        .k-btn.secondary { background: #eaf4ed; color: #19583f; }
+        .k-btn.stop { background: #8b3333; }
+        .k-btn:disabled { opacity: .55; cursor: not-allowed; }
+        .k-note { color: #526a5e; font-size: 13px; line-height: 1.5; }
+        .k-error {
+          background: #fff0ee; color: #8b2525; padding: 12px;
+          border-radius: 10px; margin-top: 12px;
+        }
+        .k-status {
+          background: #edf7f0; color: #245f43; padding: 10px;
+          border-radius: 10px; margin-top: 12px; font-size: 14px;
+        }
+        .k-answer { line-height: 1.75; overflow-wrap: anywhere; }
+        .k-answer img { max-width: 100%; }
+        .k-answer table { display: block; max-width: 100%; overflow-x: auto; }
+        .k-answer pre { overflow-x: auto; padding: 12px; background: #f4f7f5; border-radius: 10px; }
+        .k-preview { max-width: 100%; max-height: 260px; border-radius: 12px; margin-top: 12px; }
+        .k-answer .katex-display { overflow-x: auto; overflow-y: hidden; padding: 5px 0; }
+        @media(max-width:600px) {
+          .klasevia-app { padding: 10px; }
+          .k-hero { padding: 19px; }
+          .k-hero h1 { font-size: 25px; }
+          .k-card { padding: 15px; }
+          .k-grid { grid-template-columns: 1fr; }
+          .k-actions .k-btn { flex: 1 1 100%; }
+        }
+      `}</style>
+
+      <header className="k-hero">
+        <h1>📚 Klasévia</h1>
+        <p>
+          Ton compagnon d’apprentissage : pose tes questions,
+          partage une photo d’exercice et progresse à ton rythme.
+        </p>
       </header>
 
-      <main>
-        <section className="hero">
-          <div>
-            <div className="eyebrow">TON COMPAGNON D'ÉTUDE</div>
-            <h1>
-              Ton cours devient
-              <br />
-              <em>plus clair.</em>
-            </h1>
-            <p>
-              Des explications adaptées à ta classe, des exemples
-              concrets et des exercices pour progresser du primaire
-              à la Terminale.
-            </p>
-            <div className="chips">
-              <span>📚 Fiches de révision</span>
-              <span>💡 Explications guidées</span>
-              <span>📷 Aide par photo</span>
-            </div>
+      <section className="k-card">
+        <h2>Préparons ta réponse</h2>
+
+        <div className="k-grid">
+          <div className="k-field">
+            <label htmlFor="k-grade">Classe</label>
+            <select
+              id="k-grade"
+              value={grade}
+              onChange={(e) => setGrade(e.target.value)}
+            >
+              {CLASSES.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
           </div>
 
-          <div className="hero-art">
-            <div className="book">✦</div>
-            <div className="floating f1">Je comprends !</div>
-            <div className="floating f2">+1 notion maîtrisée</div>
+          <div className="k-field">
+            <label htmlFor="k-serie">Série</label>
+            <select
+              id="k-serie"
+              value={serie}
+              onChange={(e) => setSerie(e.target.value)}
+            >
+              {SERIES.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
           </div>
-        </section>
 
-        <div className="workspace">
-          <aside className="sidebar">
-            <div className="side-title">MON ESPACE</div>
-
-            <button
-              className={mode === "synthese" ? "nav active" : "nav"}
-              onClick={() => {
-                setMode("synthese");
-                setError("");
-              }}
+          <div className="k-field">
+            <label htmlFor="k-subject">Matière</label>
+            <select
+              id="k-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
             >
-              ✦ <span>Synthétiser un cours</span>
-            </button>
+              {SUBJECTS.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </div>
 
-            <button
-              className={mode === "explication" ? "nav active" : "nav"}
-              onClick={() => {
-                setMode("explication");
-                setError("");
-              }}
+          <div className="k-field">
+            <label htmlFor="k-mode">Type d'aide</label>
+            <select
+              id="k-mode"
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
             >
-              💡 <span>Expliquer une notion</span>
-            </button>
+              <option value="explication">M'expliquer et m'accompagner</option>
+              <option value="synthese">Synthétiser un cours</option>
+            </select>
+          </div>
 
-            <div className="side-note">
-              <b>La méthode Klasévia</b>
-              <p>
-                1. Comprends l'idée
-                <br />
-                2. Observe un exemple
-                <br />
-                3. Entraîne-toi
-                <br />
-                4. Corrige tes erreurs
-              </p>
-            </div>
-
-            <div className="privacy">
-              Évite d'entrer des informations personnelles dans tes demandes.
-            </div>
-          </aside>
-
-          <section className="mainpanel">
-            <div className="panel-heading">
-              <div>
-                <div className="eyebrow dark">
-                  {mode === "synthese"
-                    ? "FICHE DE RÉVISION"
-                    : "EXPLICATION PAS À PAS"}
-                </div>
-                <h2>
-                  {mode === "synthese"
-                    ? "Transforme ta leçon"
-                    : "Qu'est-ce qui te semble flou ?"}
-                </h2>
-                <p>
-                  {mode === "synthese"
-                    ? "Obtiens les idées essentielles, les définitions et des exercices."
-                    : "Une explication adaptée à ta classe, avec des exemples concrets."}
-                </p>
-              </div>
-              <div className="spark">✳</div>
-            </div>
-
-            <div className="formgrid">
-              <label>
-                Ma classe
-                <select
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value)}
-                >
-                  {grades.map((g) => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Matière
-                <select
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                >
-                  {subjects.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </label>
-
-              {(grade === "Première" || grade === "Terminale") && (
-                <label>
-                  Ma série
-                  <select
-                    value={serie}
-                    onChange={(e) => setSerie(e.target.value)}
-                  >
-                    {series.map((s) => (
-                      <option key={s} value={s}>Série {s}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              <label className="wide">
-                Niveau de détail
-                <select
-                  value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value)}
-                >
-                  <option value="simple">Très simple, avec des mots faciles</option>
-                  <option value="normal">Détaillé, avec exemples</option>
-                  <option value="approfondi">Approfondi, avec méthode et pièges fréquents</option>
-                </select>
-              </label>
-
-              {mode === "synthese" ? (
-                <label className="wide">
-                  Colle ton cours ici
-                  <textarea
-                    rows="7"
-                    value={course}
-                    onChange={(e) => setCourse(e.target.value)}
-                    placeholder="Colle tes notes ou décris la leçon à travailler…"
-                  />
-                </label>
-              ) : (
-                <label className="wide">
-                  Ta question
-                  <textarea
-                    rows="4"
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    placeholder="Ex. : comment résoudre une équation ?"
-                  />
-                </label>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => fileRef.current?.click()}
-              >
-                📁 Choisir une photo
-              </button>
-
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => cameraRef.current?.click()}
-              >
-                📷 Prendre une photo
-              </button>
-
-              <button
-                type="button"
-                className="secondary"
-                onClick={startVoiceInput}
-                disabled={listening}
-              >
-                {listening ? "🎙️ Écoute en cours…" : "🎙️ Dicter"}
-              </button>
-
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={(e) => readImage(e.target.files?.[0])}
-              />
-
-              <input
-                ref={cameraRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-                onChange={(e) => readImage(e.target.files?.[0])}
-              />
-            </div>
-
-            {image && (
-              <div style={{ marginTop: 12, padding: 12, background: "#f2f7f1", borderRadius: 12 }}>
-                <p style={{ marginBottom: 8, fontSize: 12 }}>
-                  📷 Photo prête : {imageName}
-                </p>
-                <img
-                  src={`data:${image.mimeType};base64,${image.data}`}
-                  alt="Aperçu de la photo choisie"
-                  style={{ maxWidth: "100%", maxHeight: 260, borderRadius: 8 }}
-                />
-                <div>
-                  <button
-                    type="button"
-                    className="secondary"
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      setImage(null);
-                      setImageName("");
-                    }}
-                  >
-                    Retirer la photo
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {error && <div className="error" role="alert">{error}</div>}
-
-            <button
-              className="primary"
-              onClick={askAI}
-              disabled={loading}
+          <div className="k-field">
+            <label htmlFor="k-detail">Niveau de détail</label>
+            <select
+              id="k-detail"
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
             >
-              {loading ? (
-                <>
-                  <span className="spinner" /> Klasévia réfléchit…
-                </>
-              ) : mode === "synthese" ? (
-                "Créer ma fiche de cours →"
-              ) : (
-                "Expliquer cette notion →"
-              )}
-            </button>
-
-            {result && (
-              <section className="answer">
-                <div className="answer-top">
-                  <h3>✦ Ta réponse Klasévia</h3>
-                  <button
-                    className="secondary"
-                    onClick={speaking ? stopSpeaking : speak}
-                  >
-                    {speaking ? "⏹ Arrêter" : "🔊 Écouter"}
-                  </button>
-                </div>
-
-                <div className="answer-body">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
-                  >
-                    {result}
-                  </ReactMarkdown>
-                </div>
-
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
-                  <button className="secondary" onClick={speak}>
-                    🔁 Relire la réponse
-                  </button>
-                  <button className="secondary" onClick={newLesson}>
-                    Nouvelle leçon
-                  </button>
-                </div>
-
-                <p className="disclaimer">
-                  Vérifie les informations avec ton cours et les consignes
-                  de ton enseignant. L’IA peut faire des erreurs.
-                </p>
-              </section>
-            )}
-
-            <div className="tip">
-              <span>🌱</span>
-              <div>
-                <b>Petit conseil</b>
-                <p>
-                  Après avoir lu la réponse, ferme ton cahier et explique
-                  la notion avec tes propres mots.
-                </p>
-              </div>
-            </div>
-          </section>
+              <option value="simple">Simple et accessible</option>
+              <option value="normal">Normal</option>
+              <option value="détaillé">Détaillé, étape par étape</option>
+            </select>
+          </div>
         </div>
 
-        <footer>
-          Klasévia · Prototype éducatif · Côte d’Ivoire
-          <span>Une étape après l’autre, tu progresses.</span>
-        </footer>
-      </main>
-    </div>
+        <form onSubmit={submitQuestion}>
+          <div className="k-field" style={{ marginTop: 16 }}>
+            <label htmlFor="k-question">Ta question ou ton cours</label>
+            <textarea
+              id="k-question"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Écris ta question ici. Tu peux aussi utiliser le microphone."
+            />
+          </div>
+
+          <div className="k-actions">
+            <button
+              type="button"
+              className="k-btn secondary"
+              onClick={toggleListening}
+              disabled={loading}
+            >
+              {listening ? "⏹ Arrêter le micro" : "🎙 Poser une question à la voix"}
+            </button>
+
+            <button
+              type="button"
+              className="k-btn secondary"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+            >
+              📷 Ajouter une photo
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                handleImage(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+          </div>
+
+          {imagePreview && (
+            <div>
+              <img
+                src={imagePreview}
+                alt="Aperçu de l'exercice"
+                className="k-preview"
+              />
+              <div>
+                <button
+                  type="button"
+                  className="k-btn secondary"
+                  onClick={() => {
+                    setImage(null);
+                    setImagePreview("");
+                    if (fileInputRef.current) {
+                      fileInputRef.current.value = "";
+                    }
+                  }}
+                >
+                  Retirer la photo
+                </button>
+              </div>
+            </div>
+          )}
+
+          <p className="k-note">
+            Astuce : tu peux prendre une photo d’un exercice
+            ou choisir une image dans ta galerie.
+          </p>
+
+          <div className="k-actions">
+            <button className="k-btn" type="submit" disabled={loading}>
+              {loading ? "Klasévia réfléchit…" : "✨ Obtenir une réponse"}
+            </button>
+
+            <button
+              className="k-btn secondary"
+              type="button"
+              onClick={clearConversation}
+              disabled={loading}
+            >
+              Effacer
+            </button>
+          </div>
+        </form>
+
+        {error && <div className="k-error" role="alert">{error}</div>}
+        {voiceStatus && <div className="k-status" aria-live="polite">{voiceStatus}</div>}
+      </section>
+
+      <section className="k-card">
+        <h2>💡 La réponse de Klasévia</h2>
+
+        {!answer && !loading && (
+          <p className="k-note">
+            Ta réponse apparaîtra ici. Tu pourras ensuite la faire lire
+            à voix haute avec le bouton « Écouter ».
+          </p>
+        )}
+
+        {loading && (
+          <p aria-live="polite">Préparation de ta réponse. Patiente un instant…</p>
+        )}
+
+        {answer && (
+          <>
+            <div className="k-actions">
+              {!speaking ? (
+                <button
+                  type="button"
+                  className="k-btn"
+                  onClick={startSpeaking}
+                  disabled={!voiceSupported}
+                >
+                  🔊 Écouter à {SPEED}×
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="k-btn stop"
+                  onClick={stopSpeaking}
+                >
+                  ⏹ Arrêter la lecture
+                </button>
+              )}
+
+              <button
+                type="button"
+                className="k-btn secondary"
+                onClick={startSpeaking}
+                disabled={!voiceSupported || speaking}
+              >
+                ↻ Relire la réponse
+              </button>
+            </div>
+
+            <p className="k-note">
+              Vitesse : {SPEED}× · Style recherché : professeur chaleureux
+              et pédagogue · Langue : français.
+            </p>
+
+            <p className="k-note">
+              Voix détectée : {availableVoice || "Recherche en cours…"}
+            </p>
+
+            <article className="k-answer">
+              <ReactMarkdown
+                remarkPlugins={[remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+              >
+                {answer}
+              </ReactMarkdown>
+            </article>
+          </>
+        )}
+
+        {!voiceSupported && (
+          <p className="k-note">
+            La lecture vocale n'est pas disponible dans ce navigateur.
+            Essaie avec Chrome sur Android.
+          </p>
+        )}
+
+        {!recognitionSupported && (
+          <p className="k-note">
+            Si la saisie vocale n'est pas prise en charge, utilise le
+            microphone du clavier Android pour dicter ta question.
+          </p>
+        )}
+      </section>
+
+      <footer className="k-note" style={{ textAlign: "center", padding: 12 }}>
+        Klasévia · Apprendre, comprendre et progresser.
+      </footer>
+    </main>
   );
 }
 
