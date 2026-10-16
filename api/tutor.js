@@ -24,28 +24,38 @@ export default async function handler(req, res) {
       });
     }
 
-    const normalizedMessage = String(message).toLowerCase().trim();
+    const normalizedMessage = String(message)
+      .toLowerCase()
+      .trim();
 
     const recentHistory = Array.isArray(history)
-      ? history.slice(-16)
+      ? history.slice(-20)
       : [];
 
     const historyText = recentHistory
       .map((item) => {
-        const role = item.role === "user" ? "Élève" : "Klasévia";
+        const role =
+          item.role === "user"
+            ? "Élève"
+            : "Klasévia";
+
         return `${role}: ${item.content || ""}`;
       })
       .join("\n");
 
     /*
-     * Détection des intentions.
+     * ============================================================
+     * DÉTECTION DES INTENTIONS
+     * ============================================================
      */
+
     const isQuizRequest =
       mode === "quiz" ||
       normalizedMessage.includes("quiz") ||
       normalizedMessage.includes("qcm") ||
       normalizedMessage.includes("question à choix") ||
       normalizedMessage.includes("teste-moi") ||
+      normalizedMessage.includes("teste moi") ||
       normalizedMessage.includes("test moi") ||
       normalizedMessage.includes("fais-moi un quiz") ||
       normalizedMessage.includes("fais moi un quiz");
@@ -66,52 +76,149 @@ export default async function handler(req, res) {
       normalizedMessage.includes("ma reponse");
 
     /*
-     * Détermine si l'historique montre qu'une question de quiz
-     * vient d'être posée et que le message actuel ressemble
-     * à une réponse de l'élève.
+     * ============================================================
+     * DERNIER MESSAGE DE KLASÉVIA
+     * ============================================================
      */
+
     const assistantMessages = recentHistory.filter(
       (item) => item.role === "assistant"
     );
 
     const lastAssistantMessage =
       assistantMessages.length > 0
-        ? assistantMessages[assistantMessages.length - 1]?.content || ""
+        ? String(
+            assistantMessages[assistantMessages.length - 1]?.content || ""
+          )
         : "";
 
+    const lastAssistantLower =
+      lastAssistantMessage.toLowerCase();
+
+    /*
+     * ============================================================
+     * DÉTECTION ROBUSTE D'UNE QUESTION DE QUIZ
+     * ============================================================
+     *
+     * On ne cherche pas uniquement le mot "question".
+     * Une question de quiz peut être :
+     *
+     * "Quelle fraction..."
+     * "Combien..."
+     * "Que vaut..."
+     * "Quel est..."
+     * "Calcule..."
+     * ou simplement contenir A. B. C. D.
+     */
+
+    const hasQuizChoices =
+      /\bA[\.\)]/i.test(lastAssistantMessage) &&
+      /\bB[\.\)]/i.test(lastAssistantMessage) &&
+      /\bC[\.\)]/i.test(lastAssistantMessage) &&
+      /\bD[\.\)]/i.test(lastAssistantMessage);
+
+    const hasQuizQuestionWords =
+      lastAssistantLower.includes("question") ||
+      lastAssistantLower.includes("quelle") ||
+      lastAssistantLower.includes("quel") ||
+      lastAssistantLower.includes("quelle est") ||
+      lastAssistantLower.includes("quel est") ||
+      lastAssistantLower.includes("combien") ||
+      lastAssistantLower.includes("que vaut") ||
+      lastAssistantLower.includes("calcule") ||
+      lastAssistantLower.includes("détermine") ||
+      lastAssistantLower.includes("choisis") ||
+      lastAssistantLower.includes("réponds") ||
+      lastAssistantLower.includes("réponse");
+
+    const hasQuizNumbering =
+      /question\s*\d+/i.test(lastAssistantMessage) ||
+      /question\s*n[°o]?\s*\d+/i.test(lastAssistantMessage);
+
     const hasPreviousQuizQuestion =
-      lastAssistantMessage.toLowerCase().includes("question") ||
-      lastAssistantMessage.toLowerCase().includes("quelle fraction") ||
-      lastAssistantMessage.toLowerCase().includes("quelle est") ||
-      lastAssistantMessage.toLowerCase().includes("choisis") ||
-      lastAssistantMessage.toLowerCase().includes("a.") ||
-      lastAssistantMessage.toLowerCase().includes("b.") ||
-      lastAssistantMessage.toLowerCase().includes("c.") ||
-      lastAssistantMessage.toLowerCase().includes("d.");
+      hasQuizChoices ||
+      hasQuizQuestionWords ||
+      hasQuizNumbering;
+
+    /*
+     * ============================================================
+     * DÉTECTION DES RÉPONSES COURTES
+     * ============================================================
+     *
+     * On accepte explicitement :
+     *
+     * A
+     * B
+     * C
+     * D
+     * A.
+     * B)
+     * 2/4
+     * 6/10
+     * 3/5
+     * 12
+     * 7,5
+     * 7.5
+     *
+     * Mais aussi quelques réponses textuelles courtes.
+     */
+
+    const isLetterAnswer =
+      /^(?:a|b|c|d)[\.\)]?$/i.test(
+        normalizedMessage
+      );
+
+    const isFractionAnswer =
+      /^-?\d+\s*\/\s*-?\d+$/.test(
+        normalizedMessage
+      );
+
+    const isNumberAnswer =
+      /^-?\d+(?:[.,]\d+)?$/.test(
+        normalizedMessage
+      );
+
+    const isShortTextAnswer =
+      /^[a-zàâçéèêëîïôûùüÿñæœ\s'-]{1,40}$/i.test(
+        normalizedMessage
+      ) &&
+      normalizedMessage.split(/\s+/).length <= 6;
 
     const looksLikeShortAnswer =
       normalizedMessage.length <= 80 &&
       (
-        /^[abcd]$/i.test(normalizedMessage) ||
-        /^[abcd][\.\)]?$/i.test(normalizedMessage) ||
-        /^\d+\s*\/\s*\d+$/.test(normalizedMessage) ||
-        /^-?\d+([.,]\d+)?$/.test(normalizedMessage) ||
-        /^[a-zàâçéèêëîïôûùüÿñæœ\s'-]{1,40}$/i.test(normalizedMessage)
+        isLetterAnswer ||
+        isFractionAnswer ||
+        isNumberAnswer ||
+        isShortTextAnswer
       );
+
+    /*
+     * ============================================================
+     * RÉPONSE À UN QUIZ
+     * ============================================================
+     *
+     * IMPORTANT :
+     * Si Klasévia vient de poser une question et que l'élève répond
+     * avec quelque chose de court, on considère cela comme une
+     * réponse au quiz.
+     */
 
     const isQuizAnswer =
       !isQuizRequest &&
       hasPreviousQuizQuestion &&
       looksLikeShortAnswer;
 
-    /*
-     * Si le message est une réponse à une question précédente,
-     * le mode quiz doit être conservé.
-     */
     const isQuiz =
       isQuizRequest ||
       isQuizAnswer ||
       mode === "quiz";
+
+    /*
+     * ============================================================
+     * MISSION DE BASE
+     * ============================================================
+     */
 
     let mission = `
 Tu es Klasévia, un tuteur scolaire intelligent conçu pour accompagner
@@ -122,8 +229,8 @@ Matière : ${subject || "non précisée"}
 Série : ${serie || "non précisée"}
 Difficulté : ${difficulty || "non précisée"}
 
-Tu réponds toujours en français clair, naturel et adapté au niveau scolaire
-de l'élève.
+Tu réponds toujours en français clair, naturel et adapté au niveau
+scolaire de l'élève.
 
 RÈGLES GÉNÉRALES :
 
@@ -138,48 +245,72 @@ RÈGLES GÉNÉRALES :
 `;
 
     /*
+     * ============================================================
      * MODE QUIZ
+     * ============================================================
      */
+
     if (isQuiz) {
       if (isQuizAnswer) {
         mission += `
 
-MODE : RÉPONSE À UNE QUESTION DE QUIZ
+MODE : CORRECTION D'UNE RÉPONSE DE QUIZ
+
+Le message actuel de l'élève est UNE RÉPONSE à la dernière question
+de quiz posée par Klasévia.
 
 IMPORTANT :
-Le message actuel de l'élève doit être interprété comme une réponse
-à la dernière question de quiz posée par Klasévia.
 
-NE recommence PAS le quiz.
-NE demande PAS à l'élève de donner à nouveau sa réponse.
-NE dis PAS que l'élève n'a pas répondu.
+- NE recommence PAS le quiz.
+- NE demande PAS quelle est la matière.
+- NE demande PAS quel est le chapitre.
+- NE dis PAS que l'élève n'a pas répondu.
+- NE demande PAS à l'élève de répéter sa réponse.
+- Traite directement le message actuel comme une tentative de réponse.
 
-Tu dois :
-
-1. Identifier la dernière question de quiz dans l'historique.
-2. Identifier la réponse actuelle de l'élève.
-3. Comparer cette réponse à la bonne réponse.
-4. Dire clairement si la réponse est correcte ou incorrecte.
-5. Expliquer brièvement le raisonnement.
-6. Si la réponse est incorrecte, donner la bonne réponse.
-7. Ensuite, proposer la question suivante du quiz.
-
-La réponse actuelle de l'élève est :
+La réponse actuelle de l'élève est exactement :
 
 "${message}"
 
-Cette réponse doit être traitée comme une tentative de réponse,
-même si elle est très courte, par exemple :
-- A
-- B
-- C
-- D
-- 3/4
-- 2/5
-- 12
-- 7,5
+Même si la réponse est très courte, elle est valide comme tentative.
 
-Ne demande jamais simplement de répéter la réponse.
+Exemples de réponses valides :
+
+A
+B
+C
+D
+A.
+B)
+2/4
+6/10
+3/5
+12
+7,5
+7.5
+
+Tu dois :
+
+1. retrouver la dernière question de quiz dans l'historique ;
+2. retrouver les choix A, B, C et D s'ils existent ;
+3. déterminer la bonne réponse ;
+4. lire exactement la réponse actuelle de l'élève ;
+5. comparer la réponse de l'élève à la bonne réponse ;
+6. dire clairement si elle est correcte ou incorrecte ;
+7. expliquer brièvement pourquoi ;
+8. donner la bonne réponse si nécessaire ;
+9. proposer ensuite une nouvelle question.
+
+Si l'élève répond "C", cela signifie qu'il choisit la proposition C.
+
+Si l'élève répond "2/4", cela signifie qu'il donne exactement
+la fraction 2/4.
+
+Si l'élève répond "6/10", cela signifie qu'il donne exactement
+la fraction 6/10.
+
+Tu ne dois jamais transformer une réponse de l'élève en une autre
+réponse avant de la corriger.
 `;
       } else {
         mission += `
@@ -188,21 +319,25 @@ MODE : CRÉATION OU POURSUITE D'UN QUIZ
 
 Tu dois créer ou poursuivre un quiz scolaire.
 
-Si l'élève vient de demander un quiz, commence directement par la première
-question. Ne demande pas quel chapitre l'élève souhaite travailler si son
+Si l'élève vient de demander un quiz, commence DIRECTEMENT par
+la première question.
+
+Ne demande pas quel chapitre l'élève souhaite travailler si son
 message contient déjà le thème.
 
-Par exemple, si l'élève dit :
-"Fais-moi un quiz de mathématiques niveau 5e sur les fractions",
+Exemple :
 
-tu dois immédiatement poser une première question sur les fractions niveau 5e.
+"Fais-moi un quiz de mathématiques niveau 5e sur les fractions."
+
+Tu dois immédiatement poser une première question sur les fractions
+niveau 5e.
 
 RÈGLES :
 
 1. Pose une seule question à la fois.
 2. Pour un QCM, propose exactement quatre choix :
    A, B, C et D.
-3. Une seule réponse doit être correcte dans un QCM à réponse unique.
+3. Une seule réponse doit être correcte.
 4. Les mauvaises réponses doivent être plausibles.
 5. Ne révèle pas la bonne réponse avant la tentative de l'élève.
 6. Lorsque l'élève répond, corrige sa réponse.
@@ -216,8 +351,8 @@ RÈGLES :
 
 VALIDATION MATHÉMATIQUE OBLIGATOIRE
 
-Pour toute question de mathématiques, tu dois vérifier le problème
-toi-même avant de donner la correction.
+Pour toute question de mathématiques, vérifie toi-même le calcul
+avant de corriger l'élève.
 
 Pour les fractions :
 
@@ -227,7 +362,7 @@ Pour les fractions :
 - vérifie l'équivalence des fractions ;
 - vérifie les simplifications ;
 - vérifie les opérations ;
-- vérifie toutes les propositions A, B, C et D.
+- vérifie les propositions A, B, C et D.
 
 EXEMPLE :
 
@@ -245,17 +380,36 @@ Donc :
 
 18/12 = 3/2
 
-Il est INTERDIT d'écrire que 12 est le numérateur
-ou que 18 est le dénominateur.
+Autre exemple :
 
-Pour chaque calcul, le résultat mathématique vérifié doit avoir priorité
-sur toute réponse préparée précédemment.
+6/10
+
+PGCD(6,10) = 2
+
+6 ÷ 2 = 3
+10 ÷ 2 = 5
+
+Donc :
+
+6/10 = 3/5
+
+Il est INTERDIT d'écrire :
+
+6/10 = 5/3
+
+Il est également interdit d'inverser numérateur et dénominateur.
+
+Pour chaque calcul, le résultat mathématique vérifié doit avoir
+priorité sur toute réponse préparée précédemment.
 `;
     }
 
     /*
+     * ============================================================
      * MODE EXERCICE
+     * ============================================================
      */
+
     if (isExercise) {
       mission += `
 
@@ -289,8 +443,11 @@ ADAPTATION :
     }
 
     /*
+     * ============================================================
      * MODE CORRECTION
+     * ============================================================
      */
+
     if (isCorrection) {
       mission += `
 
@@ -318,8 +475,11 @@ Pour les mathématiques, refais toujours le calcul indépendamment.
     }
 
     /*
+     * ============================================================
      * MODE TUTORAT NORMAL
+     * ============================================================
      */
+
     if (!isQuiz && !isExercise && !isCorrection) {
       mission += `
 
@@ -338,8 +498,11 @@ et vérifie le résultat.
     }
 
     /*
+     * ============================================================
      * ADAPTATION
+     * ============================================================
      */
+
     mission += `
 
 ADAPTATION DE LA DIFFICULTÉ
@@ -370,8 +533,11 @@ Réponds maintenant à l'élève.
 `;
 
     /*
-     * Appel Gemini
+     * ============================================================
+     * APPEL GEMINI
+     * ============================================================
      */
+
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=" +
         encodeURIComponent(apiKey),
