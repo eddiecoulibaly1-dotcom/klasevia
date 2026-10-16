@@ -546,45 +546,139 @@ Réponds maintenant à l'élève.
 
     /*
      * ============================================================
-     * APPEL GEMINI
+     * CONFIGURATION GEMINI
      * ============================================================
      */
 
-    const response = await fetch(
+    const geminiUrl =
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=" +
-        encodeURIComponent(apiKey),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
+      encodeURIComponent(apiKey);
+
+    const maxAttempts = 3;
+
+    const retryableStatusCodes = new Set([
+      429,
+      500,
+      502,
+      503,
+      504
+    ]);
+
+    let response = null;
+    let lastErrorText = "";
+
+    /*
+     * ============================================================
+     * APPEL GEMINI AVEC RETRY AUTOMATIQUE
+     * ============================================================
+     *
+     * Les erreurs 503 peuvent être temporaires.
+     *
+     * Tentative 1 :
+     * appel immédiat
+     *
+     * Tentative 2 :
+     * attente de 1 seconde
+     *
+     * Tentative 3 :
+     * attente de 2 secondes
+     */
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        response = await fetch(
+          geminiUrl,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              contents: [
                 {
-                  text: mission
+                  role: "user",
+                  parts: [
+                    {
+                      text: mission
+                    }
+                  ]
                 }
-              ]
-            }
-          ],
-          generationConfig: {
-            maxOutputTokens: 4096
+              ],
+              generationConfig: {
+                maxOutputTokens: 4096
+              }
+            })
           }
-        })
+        );
+
+        if (response.ok) {
+          break;
+        }
+
+        lastErrorText = await response.text();
+
+        console.error(
+          `Erreur Gemini tentative ${attempt}/${maxAttempts} :`,
+          lastErrorText
+        );
+
+        if (
+          !retryableStatusCodes.has(response.status) ||
+          attempt === maxAttempts
+        ) {
+          break;
+        }
+
+        const delayMs = 1000 * Math.pow(2, attempt - 1);
+
+        await new Promise((resolve) => {
+          setTimeout(resolve, delayMs);
+        });
+      } catch (fetchError) {
+        console.error(
+          `Erreur réseau Gemini tentative ${attempt}/${maxAttempts} :`,
+          fetchError
+        );
+
+        lastErrorText =
+          fetchError?.message ||
+          "Erreur réseau inconnue.";
+
+        if (attempt === maxAttempts) {
+          break;
+        }
+
+        const delayMs = 1000 * Math.pow(2, attempt - 1);
+
+        await new Promise((resolve) => {
+          setTimeout(resolve, delayMs);
+        });
       }
-    );
+    }
 
-    if (!response.ok) {
-      const errorText = await response.text();
+    /*
+     * ============================================================
+     * ÉCHEC FINAL
+     * ============================================================
+     */
 
-      console.error("Erreur Gemini :", errorText);
+    if (!response || !response.ok) {
+      console.error(
+        "Échec final Gemini après plusieurs tentatives :",
+        lastErrorText
+      );
 
-      return res.status(500).json({
-        error: "Une erreur est survenue avec le service pédagogique."
+      return res.status(503).json({
+        error:
+          "Le service pédagogique est temporairement indisponible. Réessaie dans quelques instants."
       });
     }
+
+    /*
+     * ============================================================
+     * LECTURE DE LA RÉPONSE GEMINI
+     * ============================================================
+     */
 
     const data = await response.json();
 
