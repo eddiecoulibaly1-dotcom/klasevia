@@ -50,6 +50,85 @@ function makeId() {
     .slice(2, 10)}`;
 }
 
+/*
+ * ============================================================
+ * QUIZ
+ * ============================================================
+ *
+ * Le quiz possède maintenant son propre état.
+ *
+ * Le frontend ne demande plus à l'IA :
+ * "Est-ce que le dernier message était une réponse ?"
+ *
+ * Il sait directement :
+ * - quizState.active === false -> pas de quiz en cours
+ * - quizState.active === true  -> le prochain message est une réponse
+ *
+ * Cela évite notamment les problèmes avec :
+ * 2/4
+ * 6/10
+ * 3/5
+ * A
+ * B
+ * C
+ * D
+ */
+
+function isQuizStartRequest(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (!text) {
+    return false;
+  }
+
+  const patterns = [
+    /\bquiz\b/,
+    /\bqcm\b/,
+    /fais[- ]moi un quiz/,
+    /fait[- ]moi un quiz/,
+    /donne[- ]moi un quiz/,
+    /commence[- ]moi un quiz/,
+    /lance[- ]moi un quiz/,
+    /teste[- ]moi/,
+    /teste moi/,
+    /fais[- ]moi un test/,
+    /fait[- ]moi un test/,
+    /donne[- ]moi un test/,
+    /je veux un quiz/,
+    /je veux un test/
+  ];
+
+  return patterns.some(
+    pattern => pattern.test(text)
+  );
+}
+
+function isQuizStopRequest(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (!text) {
+    return false;
+  }
+
+  const patterns = [
+    /arrête le quiz/,
+    /arrete le quiz/,
+    /terminer le quiz/,
+    /termine le quiz/,
+    /fin du quiz/,
+    /stop quiz/,
+    /quitte le quiz/
+  ];
+
+  return patterns.some(
+    pattern => pattern.test(text)
+  );
+}
+
 function makeConversation(settings = {}) {
   const grade = settings.grade || "Terminale";
 
@@ -73,6 +152,13 @@ function makeConversation(settings = {}) {
       settings.difficulty || "détaillé",
     mode:
       settings.mode || "explication",
+
+    /*
+     * Nouveau :
+     * l'état du quiz appartient à la conversation.
+     */
+    quizState: null,
+
     messages: []
   };
 }
@@ -90,20 +176,35 @@ function normalizeConversation(conversation) {
 
   return {
     ...conversation,
+
     grade,
+
     serie: normalizeSerie(
       grade,
       conversation.serie
     ),
+
     subject:
       conversation.subject ||
       "Mathématiques",
+
     difficulty:
       conversation.difficulty ||
       "détaillé",
+
     mode:
       conversation.mode ||
       "explication",
+
+    /*
+     * Les anciennes conversations n'ont pas
+     * forcément quizState.
+     *
+     * On leur attribue donc null.
+     */
+    quizState:
+      conversation.quizState || null,
+
     messages:
       Array.isArray(conversation.messages)
         ? conversation.messages
@@ -478,6 +579,10 @@ function App() {
   const messages =
     activeConversation?.messages ||
     [];
+
+  const activeQuiz =
+    activeConversation?.quizState ||
+    null;
 
   const answer =
     [...messages]
@@ -1219,6 +1324,23 @@ function App() {
     );
   }
 
+  /*
+   * ============================================================
+   * ENVOI PRINCIPAL
+   * ============================================================
+   *
+   * C'est ici que l'architecture change.
+   *
+   * Avant :
+   * tout partait vers /api/tutor.
+   *
+   * Maintenant :
+   *
+   * 1. Nouveau quiz -> /api/quiz action=start
+   * 2. Quiz actif -> /api/quiz action=answer
+   * 3. Tout le reste -> /api/tutor
+   */
+
   async function submitQuestion(
     event
   ) {
@@ -1249,14 +1371,86 @@ function App() {
       activeConversation.messages ||
       [];
 
+    const currentQuiz =
+      activeConversation.quizState ||
+      null;
+
     const effectiveSerie =
       normalizeSerie(
         grade,
         serie
       );
 
+    const userText =
+      text.trim();
+
+    /*
+     * Si un quiz est actif, le message
+     * est automatiquement une réponse.
+     *
+     * Exception :
+     * si l'utilisateur demande explicitement
+     * un nouveau quiz, on recommence un quiz.
+     */
+    const startingNewQuiz =
+      isQuizStartRequest(
+        userText
+      );
+
+    const answeringQuiz =
+      Boolean(
+        currentQuiz?.active
+      ) &&
+      !startingNewQuiz;
+
+    const stoppingQuiz =
+      Boolean(
+        currentQuiz?.active
+      ) &&
+      isQuizStopRequest(
+        userText
+      );
+
+    /*
+     * Si l'utilisateur demande simplement
+     * d'arrêter le quiz, on termine localement
+     * sans demander à Gemini de deviner quoi que ce soit.
+     */
+    if (stoppingQuiz) {
+      const visibleQuestion =
+        userText;
+
+      const userMessage = {
+        role: "user",
+        content:
+          visibleQuestion,
+        id: makeId(),
+        createdAt:
+          new Date().toISOString()
+      };
+
+      updateConversation(
+        conversationId,
+        c => ({
+          ...c,
+          updatedAt:
+            new Date().toISOString(),
+          quizState: null,
+          messages: [
+            ...c.messages,
+            userMessage
+          ]
+        })
+      );
+
+      setText("");
+      removeFile();
+
+      return;
+    }
+
     const fullText = [
-      text.trim(),
+      userText,
 
       documentText.trim()
         ? `CONTENU DU FICHIER ${fileName} :\n${documentText.trim()}`
@@ -1266,7 +1460,7 @@ function App() {
       .join("\n\n");
 
     const visibleQuestion = [
-      text.trim(),
+      userText,
 
       fileName
         ? `📎 Fichier joint : ${fileName}`
@@ -1306,12 +1500,16 @@ function App() {
       activeConversation.title ===
       "Nouvelle conversation"
         ? (
-            text.trim() ||
+            userText ||
             fileName ||
             "Nouvelle conversation"
           ).slice(0, 55)
         : activeConversation.title;
 
+    /*
+     * On sauvegarde immédiatement le message
+     * de l'utilisateur.
+     */
     updateConversation(
       conversationId,
       c => ({
@@ -1342,6 +1540,126 @@ function App() {
     );
 
     try {
+      /*
+       * ========================================================
+       * MODE QUIZ
+       * ========================================================
+       */
+      if (
+        startingNewQuiz ||
+        answeringQuiz
+      ) {
+        const quizAction =
+          startingNewQuiz
+            ? "start"
+            : "answer";
+
+        /*
+         * Pour un nouveau quiz :
+         * on ne transmet pas l'ancien état.
+         *
+         * Pour une réponse :
+         * on transmet l'état exact du quiz.
+         */
+        const quizStateToSend =
+          startingNewQuiz
+            ? null
+            : currentQuiz;
+
+        const response =
+          await fetch(
+            "/api/quiz",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
+              body: JSON.stringify(
+                {
+                  action:
+                    quizAction,
+
+                  message:
+                    userText,
+
+                  grade,
+
+                  serie:
+                    effectiveSerie,
+
+                  subject,
+
+                  difficulty,
+
+                  quizState:
+                    quizStateToSend
+                }
+              )
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              "Le service de quiz est temporairement indisponible."
+          );
+        }
+
+        if (!data?.answer) {
+          throw new Error(
+            "Aucune réponse n'a été reçue du quiz."
+          );
+        }
+
+        const assistantMessage =
+          {
+            role: "assistant",
+            content:
+              data.answer,
+            id: makeId(),
+            createdAt:
+              new Date().toISOString()
+          };
+
+        /*
+         * Très important :
+         * le backend renvoie maintenant
+         * l'état officiel du quiz.
+         *
+         * Le frontend ne tente plus
+         * de le reconstruire.
+         */
+        updateConversation(
+          conversationId,
+          c => ({
+            ...c,
+
+            updatedAt:
+              new Date().toISOString(),
+
+            quizState:
+              data.quizState ||
+              null,
+
+            messages: [
+              ...c.messages,
+              assistantMessage
+            ]
+          })
+        );
+
+        return;
+      }
+
+      /*
+       * ========================================================
+       * MODE TUTEUR NORMAL
+       * ========================================================
+       */
       const response =
         await fetch(
           "/api/tutor",
@@ -1400,8 +1718,10 @@ function App() {
         conversationId,
         c => ({
           ...c,
+
           updatedAt:
             new Date().toISOString(),
+
           messages: [
             ...c.messages,
             assistantMessage
@@ -1415,6 +1735,7 @@ function App() {
       );
     } finally {
       setLoading(false);
+
       setLoadingConversationId(
         null
       );
@@ -1454,6 +1775,7 @@ function App() {
         .k-note{color:#526a5e;font-size:13px;line-height:1.5}
         .k-error{background:#fff0ee;color:#8b2525;padding:12px;border-radius:10px;margin-top:12px;overflow-wrap:anywhere}
         .k-status{background:#edf7f0;color:#245f43;padding:10px;border-radius:10px;margin-top:12px;font-size:14px;overflow-wrap:anywhere}
+        .k-quiz-status{background:#fff8df;border:1px solid #eadb98;color:#665117;padding:12px;border-radius:12px;margin-top:12px;font-size:14px;line-height:1.5}
         .k-answer{line-height:1.75;overflow-wrap:anywhere}
         .k-answer img{max-width:100%}
         .k-answer table{display:block;max-width:100%;overflow-x:auto}
@@ -1576,6 +1898,12 @@ function App() {
                         }{" "}
                         message(s)
                       </span>
+
+                      {conversation.quizState?.active && (
+                        <span className="k-history-date">
+                          🎯 Quiz en cours
+                        </span>
+                      )}
                     </button>
 
                     <button
@@ -1750,6 +2078,49 @@ function App() {
               </div>
             </div>
 
+            {activeQuiz?.active && (
+              <div
+                className="k-quiz-status"
+                aria-live="polite"
+              >
+                🎯{" "}
+                <strong>
+                  Quiz en cours
+                </strong>
+
+                <br />
+
+                Question{" "}
+                <strong>
+                  {activeQuiz.questionNumber || 1}
+                </strong>
+                /
+                <strong>
+                  {activeQuiz.total || 10}
+                </strong>
+
+                {" · "}
+
+                Score :{" "}
+                <strong>
+                  {activeQuiz.score || 0}
+                </strong>
+                /
+                {Math.max(
+                  0,
+                  (activeQuiz.questionNumber || 1) - 1
+                )}
+
+                <br />
+
+                <span>
+                  Ta prochaine réponse sera
+                  automatiquement traitée par
+                  le quiz.
+                </span>
+              </div>
+            )}
+
             <form
               onSubmit={
                 submitQuestion
@@ -1762,8 +2133,9 @@ function App() {
                 }}
               >
                 <label htmlFor="k-question">
-                  Ta question ou ton
-                  cours
+                  {activeQuiz?.active
+                    ? "Ta réponse au quiz"
+                    : "Ta question ou ton cours"}
                 </label>
 
                 <textarea
@@ -1774,7 +2146,11 @@ function App() {
                       e.target.value
                     )
                   }
-                  placeholder="Pose une question ou continue la discussion précédente…"
+                  placeholder={
+                    activeQuiz?.active
+                      ? "Écris ta réponse : 2/4, 6/10, A, B, C, D, etc."
+                      : "Pose une question ou continue la discussion précédente…"
+                  }
                 />
               </div>
 
@@ -1798,7 +2174,10 @@ function App() {
                   onClick={() =>
                     fileInputRef.current?.click()
                   }
-                  disabled={loading}
+                  disabled={
+                    loading ||
+                    activeQuiz?.active
+                  }
                 >
                   📎 Ajouter un fichier
                   ou une photo
@@ -1873,8 +2252,25 @@ function App() {
                 >
                   {loading
                     ? "Klasévia réfléchit…"
-                    : "✨ Envoyer ma question"}
+                    : activeQuiz?.active
+                      ? "✅ Valider ma réponse"
+                      : "✨ Envoyer ma question"}
                 </button>
+
+                {activeQuiz?.active && (
+                  <button
+                    className="k-btn stop"
+                    type="button"
+                    onClick={() => {
+                      setText(
+                        "Arrête le quiz"
+                      );
+                    }}
+                    disabled={loading}
+                  >
+                    🛑 Terminer le quiz
+                  </button>
+                )}
 
                 <button
                   className="k-btn secondary"
@@ -2015,9 +2411,9 @@ function App() {
                 className="k-status"
                 aria-live="polite"
               >
-                Klasévia prépare ta
-                réponse. Patiente un
-                instant…
+                {activeQuiz?.active
+                  ? "Klasévia corrige ta réponse et prépare la suite du quiz…"
+                  : "Klasévia prépare ta réponse. Patiente un instant…"}
               </div>
             )}
 
