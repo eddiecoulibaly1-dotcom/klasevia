@@ -296,15 +296,15 @@ function splitSpeech(
       " bloc de code omis "
     )
     .replace(
-      /![^]*\][^)]*/g,
+      /!\[[^\]]*\]\([^)]*\)/g,
       ""
     )
     .replace(
-      /([^]+)\][^)]*/g,
+      /\[([^\]]+)\]\([^)]*\)/g,
       "$1"
     )
     .replace(
-      /(\$|\\|\\)/g,
+      /(\$|\\\[|\\\])/g,
       " "
     )
     .replace(
@@ -1507,4 +1507,1364 @@ function App() {
           );
 
         const data =
-         
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              "Le service de quiz est temporairement indisponible."
+          );
+        }
+
+        if (!data?.answer) {
+          throw new Error(
+            "Aucune réponse n'a été reçue du quiz."
+          );
+        }
+
+        const assistantMessage =
+          {
+            role: "assistant",
+            content:
+              data.answer,
+            id: makeId(),
+            createdAt:
+              new Date().toISOString()
+          };
+
+        updateConversation(
+          conversationId,
+          c => ({
+            ...c,
+            updatedAt:
+              new Date().toISOString(),
+            quizState:
+              data.quizState ||
+              null,
+            messages: [
+              ...c.messages,
+              assistantMessage
+            ]
+          })
+        );
+
+        return;
+      }
+
+      const response =
+        await fetch(
+          "/api/tutor",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify(
+              {
+                mode,
+                grade,
+                serie:
+                  effectiveSerie,
+                subject,
+                difficulty,
+                text:
+                  fullText ||
+                  "Analyse le fichier joint et explique son contenu.",
+                image,
+                document,
+                history
+              }
+            )
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            "Le service IA est temporairement indisponible."
+        );
+      }
+
+      if (!data?.answer) {
+        throw new Error(
+          "Aucune réponse n'a été reçue."
+        );
+      }
+
+      const assistantMessage =
+        {
+          role: "assistant",
+          content:
+            data.answer,
+          id: makeId(),
+          createdAt:
+            new Date().toISOString()
+        };
+
+      updateConversation(
+        conversationId,
+        c => ({
+          ...c,
+          updatedAt:
+            new Date().toISOString(),
+          messages: [
+            ...c.messages,
+            assistantMessage
+          ]
+        })
+      );
+    } catch (err) {
+      setError(
+        err?.message ||
+          "Impossible de contacter Klasévia. Vérifie ta connexion Internet."
+      );
+    } finally {
+      setLoading(false);
+
+      setLoadingConversationId(
+        null
+      );
+    }
+  }
+
+  function clearDraft() {
+    stopSpeaking();
+
+    setText("");
+    setError("");
+
+    removeFile();
+
+    setVoiceStatus("");
+  }
+
+  return (
+    <main className="klasevia-app">
+      <style>{`
+        .klasevia-app{
+          max-width:1000px;
+          margin:0 auto;
+          padding:18px;
+          color:#18352d;
+          font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+        }
+
+        .k-hero{
+          background:linear-gradient(135deg,#e8f6ee,#f5fbf7);
+          border:1px solid #d6e8dd;
+          border-radius:22px;
+          padding:24px;
+          margin-bottom:18px
+        }
+
+        .k-hero h1{
+          margin:0 0 8px;
+          font-size:30px
+        }
+
+        .k-hero p{
+          margin:0;
+          line-height:1.6
+        }
+
+        .k-layout{
+          display:grid;
+          grid-template-columns:minmax(220px,270px) minmax(0,1fr);
+          gap:16px;
+          align-items:start
+        }
+
+        .k-card{
+          background:#fff;
+          border:1px solid #dce6df;
+          border-radius:18px;
+          padding:20px;
+          margin:0 0 16px;
+          box-shadow:0 4px 18px #19382b0a;
+          min-width:0
+        }
+
+        .k-grid{
+          display:grid;
+          grid-template-columns:repeat(2,minmax(0,1fr));
+          gap:12px
+        }
+
+        .k-field{
+          display:flex;
+          flex-direction:column;
+          gap:6px
+        }
+
+        .k-field label{
+          font-size:14px;
+          font-weight:650
+        }
+
+        .k-field select,
+        .k-field textarea,
+        .k-field input{
+          width:100%;
+          box-sizing:border-box;
+          border:1px solid #cbd9d0;
+          border-radius:11px;
+          padding:12px;
+          font:inherit;
+          background:white;
+          color:#18352d
+        }
+
+        .k-field textarea{
+          min-height:120px;
+          resize:vertical
+        }
+
+        .k-actions{
+          display:flex;
+          flex-wrap:wrap;
+          gap:10px;
+          margin-top:14px
+        }
+
+        .k-btn{
+          border:0;
+          border-radius:12px;
+          padding:12px 16px;
+          background:#176c4c;
+          color:white;
+          font:inherit;
+          font-weight:650;
+          cursor:pointer
+        }
+
+        .k-btn.secondary{
+          background:#eaf4ed;
+          color:#19583f
+        }
+
+        .k-btn.stop{
+          background:#8b3333
+        }
+
+        .k-btn:disabled{
+          opacity:.55;
+          cursor:not-allowed
+        }
+
+        .k-note{
+          color:#526a5e;
+          font-size:13px;
+          line-height:1.5
+        }
+
+        .k-error{
+          background:#fff0ee;
+          color:#8b2525;
+          padding:12px;
+          border-radius:10px;
+          margin-top:12px;
+          overflow-wrap:anywhere
+        }
+
+        .k-status{
+          background:#edf7f0;
+          color:#245f43;
+          padding:10px;
+          border-radius:10px;
+          margin-top:12px;
+          font-size:14px;
+          overflow-wrap:anywhere
+        }
+
+        .k-quiz-status{
+          background:#fff8df;
+          border:1px solid #eadb98;
+          color:#665117;
+          padding:12px;
+          border-radius:12px;
+          margin-top:12px;
+          font-size:14px;
+          line-height:1.5
+        }
+
+        .k-answer{
+          line-height:1.75;
+          overflow-wrap:anywhere
+        }
+
+        .k-answer img{
+          max-width:100%
+        }
+
+        .k-answer table{
+          display:block;
+          max-width:100%;
+          overflow-x:auto
+        }
+
+        .k-answer pre{
+          overflow-x:auto;
+          padding:12px;
+          background:#f4f7f5;
+          border-radius:10px
+        }
+
+        .k-preview{
+          max-width:100%;
+          max-height:260px;
+          border-radius:12px;
+          margin-top:12px
+        }
+
+        .k-answer .katex-display{
+          overflow-x:auto;
+          overflow-y:hidden;
+          padding:5px 0
+        }
+
+        .k-history-title{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:8px
+        }
+
+        .k-history-title h2{
+          font-size:19px;
+          margin:0
+        }
+
+        .k-history-list{
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+          margin-top:14px
+        }
+
+        .k-history-item{
+          display:flex;
+          align-items:stretch;
+          gap:4px;
+          border:1px solid #dce6df;
+          border-radius:12px;
+          overflow:hidden
+        }
+
+        .k-history-open{
+          flex:1;
+          min-width:0;
+          text-align:left;
+          background:white;
+          color:#18352d;
+          border:0;
+          padding:11px;
+          cursor:pointer;
+          font:inherit
+        }
+
+        .k-history-open.active{
+          background:#e8f6ee
+        }
+
+        .k-history-name{
+          display:block;
+          font-size:14px;
+          font-weight:700;
+          overflow-wrap:anywhere
+        }
+
+        .k-history-date{
+          display:block;
+          font-size:12px;
+          color:#607368;
+          margin-top:4px
+        }
+
+        .k-delete{
+          border:0;
+          background:#fff0ee;
+          color:#8b2525;
+          padding:8px;
+          cursor:pointer
+        }
+
+        /*
+         * ======================================================
+         * CONVERSATION
+         * ======================================================
+         *
+         * La zone de conversation devient la zone principale.
+         * Sur téléphone elle prend environ 3/5 de l'espace
+         * disponible.
+         */
+
+        .k-conversation-card{
+          position:relative
+        }
+
+        .k-message{
+          padding:14px;
+          border-radius:14px;
+          margin:14px 0;
+          min-width:0
+        }
+
+        .k-message.user{
+          background:#edf6f0;
+          border:1px solid #d8e9dd
+        }
+
+        .k-message.assistant{
+          background:#fff;
+          border:1px solid #e0e7e2
+        }
+
+        .k-message-label{
+          font-size:12px;
+          font-weight:750;
+          color:#426553;
+          margin-bottom:7px
+        }
+
+        .k-message-content{
+          line-height:1.7;
+          overflow-wrap:anywhere
+        }
+
+        .k-message-content pre{
+          white-space:pre-wrap;
+          overflow-wrap:anywhere
+        }
+
+        .k-message-content .katex-display{
+          overflow-x:auto;
+          overflow-y:hidden
+        }
+
+        .k-empty{
+          padding:20px 10px;
+          text-align:center;
+          color:#607368;
+          line-height:1.6
+        }
+
+        /*
+         * ======================================================
+         * COPIE EN UN CLIC
+         * ======================================================
+         */
+
+        .k-copy-btn{
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          gap:6px;
+          border:0;
+          border-radius:10px;
+          padding:9px 12px;
+          background:#eaf4ed;
+          color:#19583f;
+          font:inherit;
+          font-size:13px;
+          font-weight:650;
+          cursor:pointer
+        }
+
+        .k-copy-btn:hover{
+          background:#dcefe3
+        }
+
+        .k-copy-btn:disabled{
+          opacity:.6;
+          cursor:not-allowed
+        }
+
+        /*
+         * ======================================================
+         * COLONNE PRINCIPALE
+         * ======================================================
+         */
+
+        .k-main-column{
+          min-width:0
+        }
+
+        /*
+         * ======================================================
+         * MOBILE : 3/5 POUR LES RÉPONSES
+         *            2/5 POUR LA SAISIE
+         * ======================================================
+         */
+
+        @media(max-width:720px){
+
+          .klasevia-app{
+            padding:10px
+          }
+
+          .k-layout{
+            grid-template-columns:1fr
+          }
+
+          .k-hero{
+            padding:19px
+          }
+
+          .k-hero h1{
+            font-size:25px
+          }
+
+          .k-card{
+            padding:15px
+          }
+
+          .k-grid{
+            grid-template-columns:1fr
+          }
+
+          /*
+           * On place la conversation avant la zone
+           * de saisie sur mobile.
+           */
+          .k-main-column{
+            display:flex;
+            flex-direction:column;
+            min-height:calc(100dvh - 20px)
+          }
+
+          .k-conversation-card{
+            order:1;
+
+            /*
+             * Environ 3/5 de la hauteur disponible.
+             */
+            height:60dvh;
+            min-height:420px;
+
+            overflow-y:auto;
+            overscroll-behavior:contain;
+
+            margin-bottom:10px;
+          }
+
+          /*
+           * La zone de saisie prend environ 2/5.
+           */
+          .k-composer-card{
+            order:2;
+
+            height:40dvh;
+            min-height:300px;
+
+            overflow-y:auto;
+            overscroll-behavior:contain;
+
+            margin-bottom:10px;
+          }
+
+          /*
+           * Les éléments de la zone de saisie
+           * sont légèrement plus compacts.
+           */
+          .k-composer-card .k-field textarea{
+            min-height:95px;
+            max-height:125px
+          }
+
+          .k-composer-card .k-actions{
+            gap:8px;
+            margin-top:10px
+          }
+
+          .k-composer-card .k-btn{
+            padding:11px 13px
+          }
+
+          .k-actions .k-btn{
+            flex:1 1 100%
+          }
+
+          .k-message{
+            padding:12px;
+            margin:10px 0
+          }
+
+          /*
+           * Les réponses prennent toute la largeur
+           * disponible et restent facilement lisibles.
+           */
+          .k-message-content{
+            font-size:16px;
+            line-height:1.7
+          }
+        }
+
+        /*
+         * Très petits écrans.
+         */
+        @media(max-width:390px){
+
+          .k-conversation-card{
+            height:58dvh;
+            min-height:380px
+          }
+
+          .k-composer-card{
+            height:42dvh;
+            min-height:290px
+          }
+
+          .k-card{
+            padding:12px
+          }
+
+          .k-message-content{
+            font-size:15px
+          }
+        }
+      `}</style>
+
+      <header className="k-hero">
+        <h1>📚 Klasévia</h1>
+
+        <p>
+          Ton compagnon
+          d’apprentissage :
+          pose tes questions,
+          partage tes documents
+          et progresse à ton
+          rythme.
+        </p>
+      </header>
+
+      <div className="k-layout">
+        <aside className="k-card">
+          <div className="k-history-title">
+            <h2>
+              🗂️ Mes conversations
+            </h2>
+          </div>
+
+          <button
+            type="button"
+            className="k-btn k-sidebar-new"
+            onClick={
+              createNewConversation
+            }
+            disabled={loading}
+          >
+            ＋ Nouvelle
+            conversation
+          </button>
+
+          <p className="k-note">
+            Tes discussions sont
+            sauvegardées dans ce
+            navigateur.
+          </p>
+
+          <div className="k-history-list">
+            {[...conversations]
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.updatedAt
+                  ) -
+                  new Date(
+                    a.updatedAt
+                  )
+              )
+              .map(
+                conversation => (
+                  <div
+                    className="k-history-item"
+                    key={
+                      conversation.id
+                    }
+                  >
+                    <button
+                      type="button"
+                      className={`k-history-open ${
+                        conversation.id ===
+                        savedData.activeId
+                          ? "active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        openConversation(
+                          conversation
+                        )
+                      }
+                      disabled={
+                        loading
+                      }
+                    >
+                      <span className="k-history-name">
+                        {
+                          conversation.title
+                        }
+                      </span>
+
+                      <span className="k-history-date">
+                        {formatDate(
+                          conversation.updatedAt
+                        )}
+                      </span>
+
+                      <span className="k-history-date">
+                        {
+                          conversation
+                            .messages
+                            .length
+                        }{" "}
+                        message(s)
+                      </span>
+
+                      {conversation.quizState?.active && (
+                        <span className="k-history-date">
+                          🎯 Quiz en cours
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="k-delete"
+                      title="Supprimer cette conversation"
+                      aria-label={`Supprimer ${conversation.title}`}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "Supprimer définitivement cette conversation ?"
+                          )
+                        ) {
+                          deleteConversation(
+                            conversation.id
+                          );
+                        }
+                      }}
+                      disabled={
+                        loading
+                      }
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                )
+              )}
+          </div>
+        </aside>
+
+        <div className="k-main-column">
+
+          {/* ==================================================
+              ZONE DU HAUT : 3/5
+              QUESTIONS + RÉPONSES
+              ================================================== */}
+
+          <section
+            className="k-card k-conversation-card"
+          >
+            <h2>
+              💬 Conversation
+            </h2>
+
+            {messages.length ===
+              0 &&
+              !loading && (
+                <div className="k-empty">
+                  <p>
+                    Cette
+                    conversation est
+                    encore vide.
+                  </p>
+
+                  <p>
+                    Pose ta première
+                    question pour
+                    commencer.
+                  </p>
+                </div>
+              )}
+
+            {messages.map(
+              message => (
+                <article
+                  key={message.id}
+                  className={`k-message ${
+                    message.role ===
+                    "user"
+                      ? "user"
+                      : "assistant"
+                  }`}
+                >
+                  <div className="k-message-label">
+                    {message.role ===
+                    "user"
+                      ? "🙋 Ta question"
+                      : "📚 Klasévia"}
+                  </div>
+
+                  <div className="k-message-content">
+                    {message.role ===
+                    "assistant" ? (
+                      <ReactMarkdown
+                        remarkPlugins={[
+                          remarkMath
+                        ]}
+                        rehypePlugins={[
+                          [
+                            rehypeKatex,
+                            {
+                              output:
+                                "html"
+                            }
+                          ]
+                        ]}
+                      >
+                        {
+                          message.content
+                        }
+                      </ReactMarkdown>
+                    ) : (
+                      <p
+                        style={{
+                          whiteSpace:
+                            "pre-wrap",
+                          margin: 0
+                        }}
+                      >
+                        {
+                          message.content
+                        }
+                      </p>
+                    )}
+                  </div>
+
+                  {message.role ===
+                    "assistant" && (
+                    <div className="k-actions">
+
+                      <button
+                        type="button"
+                        className="k-copy-btn"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(
+                              message.content
+                            );
+
+                            setVoiceStatus(
+                              "✅ Réponse copiée."
+                            );
+
+                            setTimeout(
+                              () =>
+                                setVoiceStatus(
+                                  ""
+                                ),
+                              1800
+                            );
+                          } catch (_) {
+                            setVoiceStatus(
+                              "Impossible de copier automatiquement cette réponse."
+                            );
+                          }
+                        }}
+                      >
+                        📋 Copier la réponse
+                      </button>
+
+                      <button
+                        type="button"
+                        className="k-btn secondary"
+                        onClick={() =>
+                          startSpeaking(
+                            message.content
+                          )
+                        }
+                        disabled={
+                          !voiceSupported
+                        }
+                      >
+                        🔊 Lire cette
+                        réponse
+                      </button>
+                    </div>
+                  )}
+                </article>
+              )
+            )}
+
+            {loading && (
+              <div
+                className="k-status"
+                aria-live="polite"
+              >
+                {activeQuiz?.active
+                  ? "Klasévia corrige ta réponse et prépare la suite du quiz…"
+                  : "Klasévia prépare ta réponse. Patiente un instant…"}
+              </div>
+            )}
+
+            {answer && (
+              <div className="k-actions">
+                {!speaking ? (
+                  <button
+                    type="button"
+                    className="k-btn"
+                    onClick={() =>
+                      startSpeaking(
+                        answer
+                      )
+                    }
+                    disabled={
+                      !voiceSupported
+                    }
+                  >
+                    🔊 Écouter la
+                    dernière réponse
+                    à {SPEED}×
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="k-btn stop"
+                    onClick={
+                      stopSpeaking
+                    }
+                  >
+                    ⏹ Arrêter la
+                    lecture
+                  </button>
+                )}
+              </div>
+            )}
+
+            {availableVoice && (
+              <p className="k-note">
+                Voix détectée :{" "}
+                {availableVoice}
+              </p>
+            )}
+
+            {!voiceSupported && (
+              <p className="k-note">
+                Pour écouter les
+                réponses, essaie
+                Chrome sur Android.
+              </p>
+            )}
+
+            {!recognitionSupported && (
+              <p className="k-note">
+                Tu peux dicter ta
+                question avec le
+                microphone du clavier
+                Android.
+              </p>
+            )}
+          </section>
+
+          {/* ==================================================
+              ZONE DU BAS : 2/5
+              SAISIE DE LA QUESTION / RÉPONSE
+              ================================================== */}
+
+          <section
+            className="k-card k-composer-card"
+          >
+            <h2>
+              Préparons ta réponse
+            </h2>
+
+            <div className="k-grid">
+              <div className="k-field">
+                <label htmlFor="k-grade">
+                  Classe
+                </label>
+
+                <select
+                  id="k-grade"
+                  value={grade}
+                  onChange={e =>
+                    handleGradeChange(
+                      e.target.value
+                    )
+                  }
+                >
+                  {CLASSES.map(
+                    item => (
+                      <option
+                        key={item}
+                      >
+                        {item}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+
+              {gradeHasSeries(
+                grade
+              ) && (
+                <div className="k-field">
+                  <label htmlFor="k-serie">
+                    Série
+                  </label>
+
+                  <select
+                    id="k-serie"
+                    value={serie}
+                    onChange={e =>
+                      setSerie(
+                        e.target.value
+                      )
+                    }
+                  >
+                    {SERIES.map(
+                      item => (
+                        <option
+                          key={item}
+                        >
+                          {item}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+              )}
+
+              <div className="k-field">
+                <label htmlFor="k-subject">
+                  Matière
+                </label>
+
+                <select
+                  id="k-subject"
+                  value={subject}
+                  onChange={e =>
+                    setSubject(
+                      e.target.value
+                    )
+                  }
+                >
+                  {SUBJECTS.map(
+                    item => (
+                      <option
+                        key={item}
+                      >
+                        {item}
+                      </option>
+                    )
+                  )}
+                </select>
+              </div>
+
+              <div className="k-field">
+                <label htmlFor="k-mode">
+                  Type d'aide
+                </label>
+
+                <select
+                  id="k-mode"
+                  value={mode}
+                  onChange={e =>
+                    setMode(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="explication">
+                    M'expliquer et
+                    m'accompagner
+                  </option>
+
+                  <option value="synthese">
+                    Synthétiser un cours
+                  </option>
+                </select>
+              </div>
+
+              <div className="k-field">
+                <label htmlFor="k-detail">
+                  Niveau de détail
+                </label>
+
+                <select
+                  id="k-detail"
+                  value={difficulty}
+                  onChange={e =>
+                    setDifficulty(
+                      e.target.value
+                    )
+                  }
+                >
+                  <option value="simple">
+                    Simple et accessible
+                  </option>
+
+                  <option value="normal">
+                    Normal
+                  </option>
+
+                  <option value="détaillé">
+                    Détaillé, étape par
+                    étape
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            {activeQuiz?.active && (
+              <div
+                className="k-quiz-status"
+                aria-live="polite"
+              >
+                🎯{" "}
+                <strong>
+                  Quiz en cours
+                </strong>
+
+                <br />
+
+                Question{" "}
+                <strong>
+                  {activeQuiz.questionNumber || 1}
+                </strong>
+                /
+                <strong>
+                  {activeQuiz.total || 10}
+                </strong>
+
+                {" · "}
+
+                Score :{" "}
+                <strong>
+                  {activeQuiz.score || 0}
+                </strong>
+                /
+                {Math.max(
+                  0,
+                  (activeQuiz.questionNumber || 1) - 1
+                )}
+
+                <br />
+
+                <span>
+                  Ta prochaine réponse sera
+                  automatiquement traitée par
+                  le quiz.
+                </span>
+              </div>
+            )}
+
+            <form
+              onSubmit={
+                submitQuestion
+              }
+            >
+              <div
+                className="k-field"
+                style={{
+                  marginTop: 12
+                }}
+              >
+                <label htmlFor="k-question">
+                  {activeQuiz?.active
+                    ? "✍️ Ta réponse au quiz"
+                    : "✍️ Ta question ou ton cours"}
+                </label>
+
+                <textarea
+                  id="k-question"
+                  value={text}
+                  onChange={e =>
+                    setText(
+                      e.target.value
+                    )
+                  }
+                  placeholder={
+                    activeQuiz?.active
+                      ? "Écris ta réponse : 2/4, 6/10, A, B, C, D, etc."
+                      : "Pose une question ou continue la discussion précédente…"
+                  }
+                />
+              </div>
+
+              <div className="k-actions">
+                <button
+                  type="button"
+                  className="k-btn secondary"
+                  onClick={
+                    toggleListening
+                  }
+                  disabled={loading}
+                >
+                  {listening
+                    ? "⏹ Arrêter le micro"
+                    : "🎙 Question vocale"}
+                </button>
+
+                <button
+                  type="button"
+                  className="k-btn secondary"
+                  onClick={() =>
+                    fileInputRef.current?.click()
+                  }
+                  disabled={
+                    loading ||
+                    activeQuiz?.active
+                  }
+                >
+                  📎 Ajouter un fichier
+                  ou une photo
+                </button>
+
+                <input
+                  ref={
+                    fileInputRef
+                  }
+                  type="file"
+                  accept=".pdf,.txt,application/pdf,text/plain,image/jpeg,image/png,image/webp"
+                  style={{
+                    display: "none"
+                  }}
+                  onChange={e => {
+                    handleFile(
+                      e.target.files?.[0]
+                    );
+
+                    e.target.value =
+                      "";
+                  }}
+                />
+              </div>
+
+              {fileName && (
+                <div className="k-status">
+                  📄 Fichier sélectionné :{" "}
+                  <strong>
+                    {fileName}
+                  </strong>
+
+                  <div className="k-actions">
+                    <button
+                      type="button"
+                      className="k-btn secondary"
+                      onClick={
+                        removeFile
+                      }
+                    >
+                      Retirer le
+                      fichier
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {imagePreview && (
+                <img
+                  src={
+                    imagePreview
+                  }
+                  alt="Aperçu du fichier image"
+                  className="k-preview"
+                />
+              )}
+
+              <p className="k-note">
+                Formats acceptés :
+                PDF (3 Mo maximum),
+                TXT (100 Ko
+                maximum), images
+                JPG, PNG ou WebP
+                (4 Mo maximum).
+              </p>
+
+              <div className="k-actions">
+                <button
+                  className="k-btn"
+                  type="submit"
+                  disabled={loading}
+                >
+                  {loading
+                    ? "Klasévia réfléchit…"
+                    : activeQuiz?.active
+                      ? "✅ Valider ma réponse"
+                      : "✨ Envoyer ma question"}
+                </button>
+
+                {activeQuiz?.active && (
+                  <button
+                    className="k-btn stop"
+                    type="button"
+                    onClick={() => {
+                      setText(
+                        "Arrête le quiz"
+                      );
+                    }}
+                    disabled={loading}
+                  >
+                    🛑 Terminer le quiz
+                  </button>
+                )}
+
+                <button
+                  className="k-btn secondary"
+                  type="button"
+                  onClick={
+                    clearDraft
+                  }
+                  disabled={loading}
+                >
+                  Effacer le
+                  brouillon
+                </button>
+              </div>
+            </form>
+
+            {error && (
+              <div
+                className="k-error"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+
+            {voiceStatus && (
+              <div
+                className="k-status"
+                aria-live="polite"
+              >
+                {voiceStatus}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      <footer
+        className="k-note"
+        style={{
+          textAlign: "center",
+          padding: 12
+        }}
+      >
+        Klasévia · Apprendre,
+        comprendre et progresser.
+      </footer>
+    </main>
+  );
+}
+
+createRoot(
+  document.getElementById("root")
+).render(
+  <App />
+);
