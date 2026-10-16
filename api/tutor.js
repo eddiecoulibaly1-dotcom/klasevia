@@ -24,15 +24,31 @@ export default async function handler(req, res) {
       });
     }
 
-    const normalizedMessage = String(message).toLowerCase();
+    const normalizedMessage = String(message).toLowerCase().trim();
 
-    const isQuiz =
+    const recentHistory = Array.isArray(history)
+      ? history.slice(-16)
+      : [];
+
+    const historyText = recentHistory
+      .map((item) => {
+        const role = item.role === "user" ? "Élève" : "Klasévia";
+        return `${role}: ${item.content || ""}`;
+      })
+      .join("\n");
+
+    /*
+     * Détection des intentions.
+     */
+    const isQuizRequest =
       mode === "quiz" ||
       normalizedMessage.includes("quiz") ||
       normalizedMessage.includes("qcm") ||
       normalizedMessage.includes("question à choix") ||
       normalizedMessage.includes("teste-moi") ||
-      normalizedMessage.includes("test moi");
+      normalizedMessage.includes("test moi") ||
+      normalizedMessage.includes("fais-moi un quiz") ||
+      normalizedMessage.includes("fais moi un quiz");
 
     const isExercise =
       mode === "exercice" ||
@@ -49,16 +65,53 @@ export default async function handler(req, res) {
       normalizedMessage.includes("ma réponse") ||
       normalizedMessage.includes("ma reponse");
 
-    const recentHistory = Array.isArray(history)
-      ? history.slice(-12)
-      : [];
+    /*
+     * Détermine si l'historique montre qu'une question de quiz
+     * vient d'être posée et que le message actuel ressemble
+     * à une réponse de l'élève.
+     */
+    const assistantMessages = recentHistory.filter(
+      (item) => item.role === "assistant"
+    );
 
-    const historyText = recentHistory
-      .map((item) => {
-        const role = item.role === "user" ? "Élève" : "Klasévia";
-        return `${role}: ${item.content || ""}`;
-      })
-      .join("\n");
+    const lastAssistantMessage =
+      assistantMessages.length > 0
+        ? assistantMessages[assistantMessages.length - 1]?.content || ""
+        : "";
+
+    const hasPreviousQuizQuestion =
+      lastAssistantMessage.toLowerCase().includes("question") ||
+      lastAssistantMessage.toLowerCase().includes("quelle fraction") ||
+      lastAssistantMessage.toLowerCase().includes("quelle est") ||
+      lastAssistantMessage.toLowerCase().includes("choisis") ||
+      lastAssistantMessage.toLowerCase().includes("a.") ||
+      lastAssistantMessage.toLowerCase().includes("b.") ||
+      lastAssistantMessage.toLowerCase().includes("c.") ||
+      lastAssistantMessage.toLowerCase().includes("d.");
+
+    const looksLikeShortAnswer =
+      normalizedMessage.length <= 80 &&
+      (
+        /^[abcd]$/i.test(normalizedMessage) ||
+        /^[abcd][\.\)]?$/i.test(normalizedMessage) ||
+        /^\d+\s*\/\s*\d+$/.test(normalizedMessage) ||
+        /^-?\d+([.,]\d+)?$/.test(normalizedMessage) ||
+        /^[a-zàâçéèêëîïôûùüÿñæœ\s'-]{1,40}$/i.test(normalizedMessage)
+      );
+
+    const isQuizAnswer =
+      !isQuizRequest &&
+      hasPreviousQuizQuestion &&
+      looksLikeShortAnswer;
+
+    /*
+     * Si le message est une réponse à une question précédente,
+     * le mode quiz doit être conservé.
+     */
+    const isQuiz =
+      isQuizRequest ||
+      isQuizAnswer ||
+      mode === "quiz";
 
     let mission = `
 Tu es Klasévia, un tuteur scolaire intelligent conçu pour accompagner
@@ -69,91 +122,148 @@ Matière : ${subject || "non précisée"}
 Série : ${serie || "non précisée"}
 Difficulté : ${difficulty || "non précisée"}
 
-Tu dois répondre en français clair, simple, encourageant et adapté au niveau
+Tu réponds toujours en français clair, naturel et adapté au niveau scolaire
 de l'élève.
 
-RÈGLES PÉDAGOGIQUES GÉNÉRALES :
+RÈGLES GÉNÉRALES :
 
-1. Adapte toujours ton vocabulaire au niveau scolaire indiqué.
+1. Adapte ton vocabulaire au niveau de l'élève.
 2. Explique progressivement.
-3. Ne donne pas inutilement la réponse avant que l'élève ait essayé.
-4. Encourage l'élève lorsqu'il réussit.
-5. Lorsqu'il se trompe, explique l'erreur sans le décourager.
-6. Utilise des exemples proches du contexte ivoirien lorsque cela est naturel.
-7. Pour les mathématiques, vérifie toujours les calculs avant de répondre.
-8. Ne présente jamais une affirmation mathématique que tu n'as pas vérifiée.
-9. Si une information manque pour résoudre correctement un problème, demande-la.
-10. Évite les explications inutilement longues.
+3. Encourage l'élève lorsqu'il réussit.
+4. En cas d'erreur, explique sans décourager.
+5. Pour les mathématiques, vérifie toujours les calculs.
+6. Ne donne jamais un résultat mathématique non vérifié.
+7. Utilise des exemples proches du contexte ivoirien lorsque cela est naturel.
+8. Ne demande pas à nouveau une information que l'élève vient déjà de donner.
 `;
 
+    /*
+     * MODE QUIZ
+     */
     if (isQuiz) {
-      mission += `
+      if (isQuizAnswer) {
+        mission += `
 
-MODE QUIZ ACTIVÉ
+MODE : RÉPONSE À UNE QUESTION DE QUIZ
+
+IMPORTANT :
+Le message actuel de l'élève doit être interprété comme une réponse
+à la dernière question de quiz posée par Klasévia.
+
+NE recommence PAS le quiz.
+NE demande PAS à l'élève de donner à nouveau sa réponse.
+NE dis PAS que l'élève n'a pas répondu.
+
+Tu dois :
+
+1. Identifier la dernière question de quiz dans l'historique.
+2. Identifier la réponse actuelle de l'élève.
+3. Comparer cette réponse à la bonne réponse.
+4. Dire clairement si la réponse est correcte ou incorrecte.
+5. Expliquer brièvement le raisonnement.
+6. Si la réponse est incorrecte, donner la bonne réponse.
+7. Ensuite, proposer la question suivante du quiz.
+
+La réponse actuelle de l'élève est :
+
+"${message}"
+
+Cette réponse doit être traitée comme une tentative de réponse,
+même si elle est très courte, par exemple :
+- A
+- B
+- C
+- D
+- 3/4
+- 2/5
+- 12
+- 7,5
+
+Ne demande jamais simplement de répéter la réponse.
+`;
+      } else {
+        mission += `
+
+MODE : CRÉATION OU POURSUITE D'UN QUIZ
 
 Tu dois créer ou poursuivre un quiz scolaire.
 
-RÈGLES DU QUIZ :
+Si l'élève vient de demander un quiz, commence directement par la première
+question. Ne demande pas quel chapitre l'élève souhaite travailler si son
+message contient déjà le thème.
+
+Par exemple, si l'élève dit :
+"Fais-moi un quiz de mathématiques niveau 5e sur les fractions",
+
+tu dois immédiatement poser une première question sur les fractions niveau 5e.
+
+RÈGLES :
 
 1. Pose une seule question à la fois.
-2. Pour un QCM, propose exactement quatre réponses :
+2. Pour un QCM, propose exactement quatre choix :
    A, B, C et D.
-3. Il doit y avoir une seule bonne réponse pour un QCM à réponse unique.
-4. Les mauvaises réponses doivent rester plausibles.
-5. Ne révèle pas la bonne réponse avant la réponse de l'élève.
-6. Lorsque l'élève répond, vérifie sa réponse indépendamment avant de la corriger.
-7. Explique ensuite clairement pourquoi sa réponse est correcte ou incorrecte.
-8. Si la réponse est incorrecte, indique la bonne réponse et explique le raisonnement.
-9. Après la correction, propose une nouvelle question si cela est naturel.
-10. Adapte progressivement la difficulté aux performances récentes de l'élève.
+3. Une seule réponse doit être correcte dans un QCM à réponse unique.
+4. Les mauvaises réponses doivent être plausibles.
+5. Ne révèle pas la bonne réponse avant la tentative de l'élève.
+6. Lorsque l'élève répond, corrige sa réponse.
+7. Après la correction, propose une nouvelle question.
+8. Adapte progressivement la difficulté.
+9. Évite de répéter exactement les mêmes questions.
+`;
+      }
 
-RÈGLE TRÈS IMPORTANTE POUR LES MATHÉMATIQUES :
+      mission += `
 
-Avant de corriger une question de mathématiques, effectue mentalement une
-double vérification du problème.
+VALIDATION MATHÉMATIQUE OBLIGATOIRE
 
-Pour chaque fraction, vérifie explicitement :
+Pour toute question de mathématiques, tu dois vérifier le problème
+toi-même avant de donner la correction.
+
+Pour les fractions :
 
 - le nombre du haut est le NUMÉRATEUR ;
 - le nombre du bas est le DÉNOMINATEUR ;
-- ne jamais inverser ces deux termes dans l'explication ;
-- vérifie que la fraction annoncée comme correcte est réellement équivalente
-  à celle de la question ;
-- si une fraction doit être irréductible, vérifie qu'elle ne peut plus être
-  simplifiée ;
-- vérifie toutes les propositions A, B, C et D avant de désigner la bonne ;
-- si tu expliques une simplification, recalcule séparément le numérateur et
-  le dénominateur.
+- ne jamais inverser ces deux termes ;
+- vérifie l'équivalence des fractions ;
+- vérifie les simplifications ;
+- vérifie les opérations ;
+- vérifie toutes les propositions A, B, C et D.
 
-EXEMPLE DE VÉRIFICATION :
+EXEMPLE :
 
-Pour 18/12 :
+18/12
 
-- numérateur = 18 ;
-- dénominateur = 12 ;
-- PGCD(18,12) = 6 ;
-- 18 ÷ 6 = 3 ;
-- 12 ÷ 6 = 2 ;
-- donc 18/12 = 3/2.
+Numérateur = 18
+Dénominateur = 12
 
-Il est INTERDIT d'écrire que 12 est le numérateur ou que 18 est le
-dénominateur.
+PGCD(18,12) = 6
 
-Pour chaque question mathématique, vérifie d'abord le résultat toi-même,
-puis seulement ensuite rédige l'explication destinée à l'élève.
+18 ÷ 6 = 3
+12 ÷ 6 = 2
 
-IMPORTANT :
-Ne fais jamais confiance à une réponse préparée précédemment si elle
-contredit le calcul réel. Le calcul vérifié doit toujours avoir priorité.
+Donc :
+
+18/12 = 3/2
+
+Il est INTERDIT d'écrire que 12 est le numérateur
+ou que 18 est le dénominateur.
+
+Pour chaque calcul, le résultat mathématique vérifié doit avoir priorité
+sur toute réponse préparée précédemment.
 `;
-    } else if (isExercise) {
+    }
+
+    /*
+     * MODE EXERCICE
+     */
+    if (isExercise) {
       mission += `
 
 MODE EXERCICE ACTIVÉ
 
-Tu dois proposer un exercice adapté au niveau de l'élève.
+Propose un exercice adapté au niveau de l'élève.
 
-Choisis le type d'exercice le plus pertinent parmi :
+Types possibles :
 
 - calcul ;
 - problème ;
@@ -163,52 +273,53 @@ Choisis le type d'exercice le plus pertinent parmi :
 - sciences ;
 - langues.
 
-Varie les types d'exercices afin d'éviter les répétitions.
-
 Présente un seul exercice à la fois.
 
 Ne donne pas immédiatement la solution.
 
 Attends la réponse de l'élève avant de corriger.
 
-Adapte la difficulté aux performances récentes :
+ADAPTATION :
+
 - réussite claire : augmente légèrement la difficulté ;
-- réussite partielle : reste au même niveau avec consolidation ;
-- erreur : simplifie ou donne davantage de guidage ;
-- plusieurs erreurs : reprends la notion avec un exercice plus accessible.
+- réussite partielle : reste au même niveau et consolide ;
+- erreur : propose une difficulté légèrement plus accessible ;
+- plusieurs erreurs : reprends la notion avec davantage de guidage.
 `;
     }
 
+    /*
+     * MODE CORRECTION
+     */
     if (isCorrection) {
       mission += `
 
 MODE CORRECTION ACTIVÉ
 
-L'élève demande une correction.
-
-Analyse précisément sa réponse.
+Analyse précisément la réponse de l'élève.
 
 Si elle est correcte :
-- félicite-le ;
-- explique brièvement pourquoi ;
-- donne le résultat clairement.
+- félicite l'élève ;
+- explique pourquoi ;
+- donne le résultat.
 
 Si elle est partiellement correcte :
 - indique ce qui est correct ;
-- identifie précisément ce qui doit être amélioré ;
-- guide l'élève vers la bonne méthode.
+- indique ce qui doit être amélioré ;
+- guide l'élève.
 
 Si elle est incorrecte :
-- ne te contente pas de dire que c'est faux ;
-- explique l'erreur ;
-- reprends le raisonnement étape par étape ;
-- donne ensuite la bonne réponse.
+- explique précisément l'erreur ;
+- reprends le raisonnement ;
+- donne la bonne réponse.
 
-Pour les mathématiques, refais toujours le calcul indépendamment avant
-d'expliquer l'erreur.
+Pour les mathématiques, refais toujours le calcul indépendamment.
 `;
     }
 
+    /*
+     * MODE TUTORAT NORMAL
+     */
     if (!isQuiz && !isExercise && !isCorrection) {
       mission += `
 
@@ -216,45 +327,51 @@ MODE TUTORAT GÉNÉRAL
 
 Réponds directement à la question de l'élève.
 
-Lorsque la question concerne une notion scolaire :
+Si l'élève pose une question scolaire :
 - explique simplement ;
-- donne un exemple ;
-- vérifie que l'explication correspond au niveau scolaire.
+- donne un exemple si utile ;
+- adapte l'explication à son niveau.
 
-Pour les mathématiques, montre les étapes du raisonnement et vérifie les
-calculs avant de donner le résultat.
+Pour les mathématiques, montre les étapes du raisonnement
+et vérifie le résultat.
 `;
     }
 
+    /*
+     * ADAPTATION
+     */
     mission += `
 
 ADAPTATION DE LA DIFFICULTÉ
 
-Observe les dernières interactions de l'élève.
+Observe l'historique récent.
 
-Si l'élève réussit plusieurs questions :
-- augmente progressivement la difficulté ;
-- introduis une petite étape supplémentaire de raisonnement.
+Si l'élève réussit :
+- augmente progressivement la difficulté.
 
 Si l'élève réussit partiellement :
-- conserve une difficulté proche ;
-- propose une question de consolidation.
+- consolide la notion.
 
-Si l'élève fait une erreur :
-- évite d'augmenter immédiatement la difficulté ;
-- propose plutôt une explication ou un exercice légèrement plus simple.
+Si l'élève se trompe :
+- explique l'erreur ;
+- évite d'augmenter immédiatement la difficulté.
 
 Ne change jamais brutalement de niveau.
 
 HISTORIQUE RÉCENT :
+
 ${historyText || "Aucun historique disponible."}
 
 MESSAGE ACTUEL DE L'ÉLÈVE :
+
 ${message}
 
 Réponds maintenant à l'élève.
 `;
 
+    /*
+     * Appel Gemini
+     */
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=" +
         encodeURIComponent(apiKey),
@@ -275,7 +392,7 @@ Réponds maintenant à l'élève.
             }
           ],
           generationConfig: {
-            temperature: 0.4,
+            temperature: isQuiz ? 0.3 : 0.5,
             maxOutputTokens: 4096
           }
         })
