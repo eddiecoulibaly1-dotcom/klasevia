@@ -1,654 +1,318 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({
-      error: "Méthode non autorisée.",
+      error: "Méthode non autorisée."
     });
   }
 
   try {
     const {
-      mode = "explication",
+      message = "",
       grade = "",
-      serie = "",
       subject = "",
-      difficulty = "normal",
-      text = "",
-      image = null,
-      document = null,
+      serie = "",
+      difficulty = "",
       history = [],
+      mode = ""
     } = req.body || {};
 
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       return res.status(500).json({
-        error: "La clé de l'IA n'est pas configurée sur le serveur.",
+        error: "La clé API Gemini n'est pas configurée."
       });
     }
 
-    if (typeof text !== "string" || !text.trim()) {
-      return res.status(400).json({
-        error: "Écris une question avant d'envoyer.",
-      });
-    }
+    const normalizedMessage = String(message).toLowerCase();
 
-    if (text.length > 30000) {
-      return res.status(400).json({
-        error: "La question est trop longue. Réduis sa longueur.",
-      });
-    }
+    const isQuiz =
+      mode === "quiz" ||
+      normalizedMessage.includes("quiz") ||
+      normalizedMessage.includes("qcm") ||
+      normalizedMessage.includes("question à choix") ||
+      normalizedMessage.includes("teste-moi") ||
+      normalizedMessage.includes("test moi");
 
-    const cleanGrade = String(grade).slice(0, 100).trim();
-    const cleanSerie = String(serie).slice(0, 100).trim();
-    const cleanSubject = String(subject).slice(0, 100).trim();
-    const cleanMode = String(mode).slice(0, 100).trim();
-    const cleanDifficulty = String(difficulty).slice(0, 100).trim();
+    const isExercise =
+      mode === "exercice" ||
+      normalizedMessage.includes("exercice") ||
+      normalizedMessage.includes("exercices") ||
+      normalizedMessage.includes("entraînement") ||
+      normalizedMessage.includes("entrainement");
 
-    const normalizedText = text
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-
-    const exerciseKeywords = [
-      "exercice",
-      "exercices",
-      "entrainement",
-      "entrainer",
-      "entraine-moi",
-      "donne-moi un exercice",
-      "propose-moi un exercice",
-      "pose-moi un exercice",
-      "question",
-      "test",
-    ];
-
-    const quizKeywords = [
-      "quiz",
-      "qcm",
-      "questionnaire",
-      "questions a choix",
-      "questions à choix",
-      "choix multiple",
-      "choix multiples",
-      "fais-moi un quiz",
-      "fais moi un quiz",
-      "commence un quiz",
-      "commencer un quiz",
-      "lance un quiz",
-      "lancer un quiz",
-    ];
-
-    const correctionKeywords = [
-      "corrige",
-      "corriger",
-      "correction",
-      "ma reponse",
-      "voici ma reponse",
-      "ai-je raison",
-      "est-ce correct",
-      "est ce correct",
-      "ma solution",
-      "mon calcul",
-    ];
-
-    const wantsQuiz =
-      cleanMode === "quiz" ||
-      quizKeywords.some((keyword) =>
-        normalizedText.includes(
-          keyword
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-        )
-      );
-
-    const wantsExercise =
-      !wantsQuiz &&
-      (cleanMode === "exercice" ||
-        exerciseKeywords.some((keyword) =>
-          normalizedText.includes(
-            keyword
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .toLowerCase()
-          )
-        ));
-
-    const wantsCorrection =
-      cleanMode === "correction" ||
-      correctionKeywords.some((keyword) =>
-        normalizedText.includes(
-          keyword
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .toLowerCase()
-        )
-      );
+    const isCorrection =
+      mode === "correction" ||
+      normalizedMessage.includes("corrige") ||
+      normalizedMessage.includes("corriger") ||
+      normalizedMessage.includes("correction") ||
+      normalizedMessage.includes("ma réponse") ||
+      normalizedMessage.includes("ma reponse");
 
     const recentHistory = Array.isArray(history)
-      ? history.slice(-16)
+      ? history.slice(-12)
       : [];
 
     const historyText = recentHistory
       .map((item) => {
-        const role = item?.role || "";
-        const content = item?.content || "";
-
-        if (!content) {
-          return "";
-        }
-
-        return `${role}: ${content}`;
+        const role = item.role === "user" ? "Élève" : "Klasévia";
+        return `${role}: ${item.content || ""}`;
       })
-      .filter(Boolean)
       .join("\n");
 
-    let exerciseContext = "";
+    let mission = `
+Tu es Klasévia, un tuteur scolaire intelligent conçu pour accompagner
+les élèves en Côte d'Ivoire.
 
-    if (wantsQuiz) {
-      exerciseContext = `
-============================================================
-MISSION ACTUELLE : MODE QUIZ
-============================================================
+Niveau scolaire : ${grade || "non précisé"}
+Matière : ${subject || "non précisée"}
+Série : ${serie || "non précisée"}
+Difficulté : ${difficulty || "non précisée"}
 
-L'élève demande un quiz.
+Tu dois répondre en français clair, simple, encourageant et adapté au niveau
+de l'élève.
 
-Tu dois créer un quiz interactif composé de questions à choix multiples.
+RÈGLES PÉDAGOGIQUES GÉNÉRALES :
+
+1. Adapte toujours ton vocabulaire au niveau scolaire indiqué.
+2. Explique progressivement.
+3. Ne donne pas inutilement la réponse avant que l'élève ait essayé.
+4. Encourage l'élève lorsqu'il réussit.
+5. Lorsqu'il se trompe, explique l'erreur sans le décourager.
+6. Utilise des exemples proches du contexte ivoirien lorsque cela est naturel.
+7. Pour les mathématiques, vérifie toujours les calculs avant de répondre.
+8. Ne présente jamais une affirmation mathématique que tu n'as pas vérifiée.
+9. Si une information manque pour résoudre correctement un problème, demande-la.
+10. Évite les explications inutilement longues.
+`;
+
+    if (isQuiz) {
+      mission += `
+
+MODE QUIZ ACTIVÉ
+
+Tu dois créer ou poursuivre un quiz scolaire.
+
+RÈGLES DU QUIZ :
+
+1. Pose une seule question à la fois.
+2. Pour un QCM, propose exactement quatre réponses :
+   A, B, C et D.
+3. Il doit y avoir une seule bonne réponse pour un QCM à réponse unique.
+4. Les mauvaises réponses doivent rester plausibles.
+5. Ne révèle pas la bonne réponse avant la réponse de l'élève.
+6. Lorsque l'élève répond, vérifie sa réponse indépendamment avant de la corriger.
+7. Explique ensuite clairement pourquoi sa réponse est correcte ou incorrecte.
+8. Si la réponse est incorrecte, indique la bonne réponse et explique le raisonnement.
+9. Après la correction, propose une nouvelle question si cela est naturel.
+10. Adapte progressivement la difficulté aux performances récentes de l'élève.
+
+RÈGLE TRÈS IMPORTANTE POUR LES MATHÉMATIQUES :
+
+Avant de corriger une question de mathématiques, effectue mentalement une
+double vérification du problème.
+
+Pour chaque fraction, vérifie explicitement :
+
+- le nombre du haut est le NUMÉRATEUR ;
+- le nombre du bas est le DÉNOMINATEUR ;
+- ne jamais inverser ces deux termes dans l'explication ;
+- vérifie que la fraction annoncée comme correcte est réellement équivalente
+  à celle de la question ;
+- si une fraction doit être irréductible, vérifie qu'elle ne peut plus être
+  simplifiée ;
+- vérifie toutes les propositions A, B, C et D avant de désigner la bonne ;
+- si tu expliques une simplification, recalcule séparément le numérateur et
+  le dénominateur.
+
+EXEMPLE DE VÉRIFICATION :
+
+Pour 18/12 :
+
+- numérateur = 18 ;
+- dénominateur = 12 ;
+- PGCD(18,12) = 6 ;
+- 18 ÷ 6 = 3 ;
+- 12 ÷ 6 = 2 ;
+- donc 18/12 = 3/2.
+
+Il est INTERDIT d'écrire que 12 est le numérateur ou que 18 est le
+dénominateur.
+
+Pour chaque question mathématique, vérifie d'abord le résultat toi-même,
+puis seulement ensuite rédige l'explication destinée à l'élève.
 
 IMPORTANT :
+Ne fais jamais confiance à une réponse préparée précédemment si elle
+contredit le calcul réel. Le calcul vérifié doit toujours avoir priorité.
+`;
+    } else if (isExercise) {
+      mission += `
 
-- Pose UNE SEULE question à la fois.
-- Chaque question doit avoir exactement 4 choix.
-- Les choix doivent être présentés clairement :
-  A. ...
-  B. ...
-  C. ...
-  D. ...
-- Une seule réponse doit être correcte.
-- Les trois autres réponses doivent être plausibles mais incorrectes.
-- Ne donne jamais la bonne réponse avant que l'élève ait répondu.
-- Ne révèle pas la solution dans l'énoncé.
-- Adapte les questions au niveau scolaire et à la matière.
-- Adapte la difficulté à la progression de l'élève.
-- Varie les questions.
-- Évite de poser exactement la même question plusieurs fois.
+MODE EXERCICE ACTIVÉ
 
-============================================================
-FORMAT DU QUIZ
-============================================================
+Tu dois proposer un exercice adapté au niveau de l'élève.
 
-Utilise une structure claire comme :
+Choisis le type d'exercice le plus pertinent parmi :
 
-### Quiz — Question 1
+- calcul ;
+- problème ;
+- réponse courte ;
+- raisonnement ;
+- compréhension ;
+- sciences ;
+- langues.
 
-[Question]
+Varie les types d'exercices afin d'éviter les répétitions.
 
-**A.** [réponse]
+Présente un seul exercice à la fois.
 
-**B.** [réponse]
+Ne donne pas immédiatement la solution.
 
-**C.** [réponse]
+Attends la réponse de l'élève avant de corriger.
 
-**D.** [réponse]
-
-👉 Réponds simplement par A, B, C ou D.
-
-Ne donne pas la correction immédiatement.
-
-============================================================
-CORRECTION D'UNE RÉPONSE AU QUIZ
-============================================================
-
-Lorsque l'élève répond à une question précédente :
-
-1. Analyse sa réponse.
-2. Détermine si elle correspond à A, B, C ou D.
-3. Vérifie la bonne réponse.
-4. Indique clairement :
-   - ✅ Bonne réponse
-   ou
-   - ❌ Mauvaise réponse
-
-5. Explique brièvement pourquoi.
-
-Si la réponse est incorrecte :
-- explique la notion ;
-- ne rabaisse jamais l'élève ;
-- transforme l'erreur en occasion d'apprentissage.
-
-============================================================
-SCORE
-============================================================
-
-Lorsque l'historique permet de compter les réponses précédentes du quiz,
-maintient un score.
-
-Présente par exemple :
-
-**Score : 2 / 3**
-
-Ne prétends jamais connaître un score si l'historique ne permet pas de le
-déterminer correctement.
-
-============================================================
-PROGRESSION
-============================================================
-
-Si l'élève réussit plusieurs questions :
-
-- augmente légèrement la difficulté ;
-- introduis progressivement des questions demandant davantage de réflexion.
-
-Si l'élève fait plusieurs erreurs :
-
-- ralentis la progression ;
-- propose une question plus accessible ;
-- renforce la notion qui pose problème.
-
-Ne change jamais brutalement de difficulté.
-
-============================================================
-QUESTION SUIVANTE
-============================================================
-
-Après avoir corrigé une réponse au quiz, propose UNE nouvelle question.
-
-Sauf si l'élève demande explicitement d'arrêter le quiz.
-
-Ne donne jamais plusieurs questions simultanément.
+Adapte la difficulté aux performances récentes :
+- réussite claire : augmente légèrement la difficulté ;
+- réussite partielle : reste au même niveau avec consolidation ;
+- erreur : simplifie ou donne davantage de guidage ;
+- plusieurs erreurs : reprends la notion avec un exercice plus accessible.
 `;
     }
 
-    if (wantsExercise && !wantsCorrection) {
-      exerciseContext = `
-============================================================
-MISSION ACTUELLE : CRÉER UN EXERCICE INTERACTIF
-============================================================
+    if (isCorrection) {
+      mission += `
 
-L'élève demande un exercice.
+MODE CORRECTION ACTIVÉ
 
-Tu dois créer UN SEUL exercice adapté à son niveau.
+L'élève demande une correction.
 
-Choisis le type d'exercice le plus pertinent :
-
-1. CALCUL
-2. PROBLÈME
-3. RÉPONSE COURTE
-4. RAISONNEMENT
-5. COMPRÉHENSION
-6. SCIENCES
-7. LANGUES
-
-Choisis le type en fonction :
-
-- de la matière ;
-- du niveau ;
-- de la demande ;
-- de la notion étudiée ;
-- de l'historique.
-
-Ne choisis pas systématiquement "calcul".
-
-============================================================
-FORMAT
-============================================================
-
-Présente :
-
-### Exercice
-
-**Type :** [type]
-
-[Situation ou question]
-
-### Consigne
-
-[Ce que l'élève doit faire]
-
-### À toi de jouer
-
-[Invitation à répondre]
-
-IMPORTANT :
-
-- UN SEUL exercice.
-- Ne donne PAS la solution immédiatement.
-- Ne donne PAS la réponse dans l'énoncé.
-- Attends la réponse de l'élève.
-
-============================================================
-PROGRESSION
-============================================================
-
-Si l'élève réussit :
-
-- félicite brièvement ;
-- augmente légèrement la difficulté.
-
-Si l'élève échoue :
-
-- identifie la difficulté ;
-- explique brièvement ;
-- donne un indice ;
-- propose ensuite un exercice légèrement plus accessible.
-
-Varie progressivement les types d'exercices.
-`;
-    }
-
-    if (wantsCorrection) {
-      exerciseContext = `
-============================================================
-MISSION ACTUELLE : CORRIGER LA RÉPONSE
-============================================================
-
-L'élève vient de proposer une réponse.
-
-Détermine si elle est :
-
-- correcte ;
-- partiellement correcte ;
-- incorrecte.
+Analyse précisément sa réponse.
 
 Si elle est correcte :
-- félicite ;
-- explique pourquoi ;
-- indique le résultat ;
-- propose éventuellement un exercice plus difficile.
+- félicite-le ;
+- explique brièvement pourquoi ;
+- donne le résultat clairement.
 
 Si elle est partiellement correcte :
 - indique ce qui est correct ;
-- identifie l'erreur ;
-- donne un indice ;
-- demande à l'élève de réessayer.
+- identifie précisément ce qui doit être amélioré ;
+- guide l'élève vers la bonne méthode.
 
 Si elle est incorrecte :
-- reste bienveillant ;
-- explique l'erreur simplement ;
-- donne un indice ;
-- demande une nouvelle tentative.
+- ne te contente pas de dire que c'est faux ;
+- explique l'erreur ;
+- reprends le raisonnement étape par étape ;
+- donne ensuite la bonne réponse.
 
-Ne donne pas automatiquement toute la solution lorsqu'une nouvelle tentative
-est pédagogiquement préférable.
-
-Adapte ensuite la difficulté selon les performances précédentes.
+Pour les mathématiques, refais toujours le calcul indépendamment avant
+d'expliquer l'erreur.
 `;
     }
 
-    const instructions = `
-Tu es Klasévia, un tuteur scolaire intelligent spécialisé dans
-l'accompagnement des élèves en Côte d'Ivoire.
+    if (!isQuiz && !isExercise && !isCorrection) {
+      mission += `
 
-TON OBJECTIF :
+MODE TUTORAT GÉNÉRAL
 
-Tu dois aider l'élève à :
+Réponds directement à la question de l'élève.
 
-- comprendre ;
-- apprendre ;
-- s'entraîner ;
-- corriger ses erreurs ;
-- progresser.
+Lorsque la question concerne une notion scolaire :
+- explique simplement ;
+- donne un exemple ;
+- vérifie que l'explication correspond au niveau scolaire.
 
-PROFIL :
+Pour les mathématiques, montre les étapes du raisonnement et vérifie les
+calculs avant de donner le résultat.
+`;
+    }
 
-- Niveau scolaire : ${cleanGrade || "non précisé"}
-- Série : ${cleanSerie || "non précisée"}
-- Matière : ${cleanSubject || "toutes matières"}
-- Mode : ${cleanMode || "explication"}
-- Difficulté : ${cleanDifficulty || "normal"}
+    mission += `
 
-============================================================
-1. ADAPTATION AU NIVEAU
-============================================================
+ADAPTATION DE LA DIFFICULTÉ
 
-Adapte le vocabulaire, les explications, les exemples et les exercices
-au niveau scolaire indiqué.
+Observe les dernières interactions de l'élève.
 
-Un élève de primaire doit recevoir des explications très simples.
+Si l'élève réussit plusieurs questions :
+- augmente progressivement la difficulté ;
+- introduis une petite étape supplémentaire de raisonnement.
 
-Un élève de collège doit recevoir des explications progressives.
+Si l'élève réussit partiellement :
+- conserve une difficulté proche ;
+- propose une question de consolidation.
 
-Un élève de lycée peut recevoir des raisonnements plus approfondis.
-
-============================================================
-2. APPRENTISSAGE ACTIF
-============================================================
-
-Ne fais pas systématiquement le travail à la place de l'élève.
-
-Lorsque cela est pertinent :
-
-- pose une question ;
-- demande une étape ;
-- donne un indice ;
-- demande le raisonnement ;
-- laisse l'élève essayer ;
-- puis corrige.
-
-============================================================
-3. QUIZ
-============================================================
-
-Un quiz doit être interactif.
-
-Une seule question à la fois.
-
-Chaque question doit proposer exactement quatre choix :
-
-A, B, C et D.
-
-Une seule réponse est correcte.
-
-Attends toujours la réponse avant de révéler la correction.
-
-Après la correction, propose une nouvelle question si l'élève souhaite
-continuer ou si le contexte montre qu'il poursuit le quiz.
-
-============================================================
-4. EXERCICES
-============================================================
-
-Lorsqu'un exercice est demandé :
-
-- choisis un type pertinent ;
-- adapte-le au niveau ;
-- varie les situations ;
-- donne une consigne claire ;
-- ne donne pas immédiatement la solution.
-
-============================================================
-5. CORRECTION
-============================================================
-
-Analyse réellement les réponses.
-
-Distingue :
-
-- réussite ;
-- réussite partielle ;
-- erreur.
-
-Explique les erreurs simplement et encourage l'élève.
-
-============================================================
-6. DIFFICULTÉ ADAPTATIVE
-============================================================
-
-Utilise l'historique récent.
-
-Réussites répétées :
-→ difficulté légèrement supérieure.
-
-Erreurs répétées :
-→ difficulté légèrement inférieure et davantage de guidage.
+Si l'élève fait une erreur :
+- évite d'augmenter immédiatement la difficulté ;
+- propose plutôt une explication ou un exercice légèrement plus simple.
 
 Ne change jamais brutalement de niveau.
 
-============================================================
-7. MATHÉMATIQUES ET NOTATION
-============================================================
-
-Utilise du LaTeX compatible avec KaTeX.
-
-Pour une fraction, utilise TOUJOURS :
-
-$\\frac{3}{8}$
-
-Pour une formule affichée :
-
-$$
-\\frac{3}{8}+\\frac{2}{8}=\\frac{5}{8}
-$$
-
-N'écris jamais une fraction sous la forme de deux nombres simplement
-placés l'un au-dessus de l'autre.
-
-============================================================
-8. CONTEXTE IVOIRIEN
-============================================================
-
-Lorsque cela est pertinent, utilise des situations familières aux élèves
-de Côte d'Ivoire.
-
-Ne force pas systématiquement une référence locale.
-
-============================================================
-9. IMAGES ET DOCUMENTS
-============================================================
-
-Si une image ou un document est fourni, analyse son contenu avant de répondre.
-
-Ne prétends jamais avoir vu un document si son contenu n'est pas accessible.
-
-============================================================
-10. HISTORIQUE
-============================================================
-
-Utilise l'historique récent pour maintenir la continuité pédagogique.
-
-Historique récent :
-
+HISTORIQUE RÉCENT :
 ${historyText || "Aucun historique disponible."}
 
-============================================================
-11. STYLE
-============================================================
+MESSAGE ACTUEL DE L'ÉLÈVE :
+${message}
 
-Réponds en français clair.
-
-Sois :
-
-- bienveillant ;
-- précis ;
-- encourageant ;
-- pédagogique ;
-- concis lorsque la question est simple.
-
-Évite les longs discours inutiles.
-
-${exerciseContext}
-
-============================================================
-DEMANDE ACTUELLE DE L'ÉLÈVE
-============================================================
-
-${text.trim()}
+Réponds maintenant à l'élève.
 `;
 
-    const parts = [
-      {
-        text: instructions,
-      },
-    ];
-
-    if (image && typeof image === "string") {
-      parts.push({
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: image,
-        },
-      });
-    }
-
-    if (document && typeof document === "string") {
-      parts.push({
-        text: `Document fourni par l'élève :\n${document.slice(0, 20000)}`,
-      });
-    }
-
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=" +
+        encodeURIComponent(apiKey),
       {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           contents: [
             {
               role: "user",
-              parts,
-            },
+              parts: [
+                {
+                  text: mission
+                }
+              ]
+            }
           ],
           generationConfig: {
-            temperature: 0.6,
-            maxOutputTokens: 4096,
-          },
-        }),
+            temperature: 0.4,
+            maxOutputTokens: 4096
+          }
+        })
       }
     );
 
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      console.error("Erreur Gemini :", errorText);
+
+      return res.status(500).json({
+        error: "Une erreur est survenue avec le service pédagogique."
+      });
+    }
+
     const data = await response.json();
 
-    if (!response.ok) {
-      console.error("Erreur Gemini :", data);
-
-      return res.status(500).json({
-        error:
-          data?.error?.message ||
-          "Une erreur est survenue lors de la communication avec l'IA.",
-      });
-    }
-
-    let answer =
+    const answer =
       data?.candidates?.[0]?.content?.parts
-        ?.map((part) => part?.text || "")
-        .join("")
-        .trim() || "";
+        ?.map((part) => part.text || "")
+        .join("") || "";
 
-    if (!answer) {
+    if (!answer.trim()) {
       return res.status(500).json({
-        error: "L'IA n'a pas retourné de réponse.",
+        error: "Klasévia n'a pas reçu de réponse exploitable."
       });
     }
-
-    answer = normalizeFractions(answer);
 
     return res.status(200).json({
-      answer,
+      answer
     });
   } catch (error) {
     console.error("Erreur API tutor :", error);
 
     return res.status(500).json({
-      error:
-        "Une erreur inattendue est survenue. Réessaie dans quelques instants.",
+      error: "Une erreur interne est survenue."
     });
   }
-}
-
-function normalizeFractions(text) {
-  if (!text || typeof text !== "string") {
-    return text;
-  }
-
-  let result = text;
-
-  result = result.replace(
-    /(^|[^\d])(\d{1,3})\s*\/\s*(\d{1,3})(?=$|[^\d])/g,
-    "$1$$\\\\frac{$2}{$3}$$"
-  );
-
-  return result;
 }
