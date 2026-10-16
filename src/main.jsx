@@ -22,11 +22,6 @@ const SERIES = [
   "A", "F", "G", "Autre"
 ];
 
-/*
- * Les classes de CP1 à 3e ne sont pas associées à une série.
- * La série ne devient pertinente qu'à partir de la Seconde
- * dans la logique actuelle de Klasévia.
- */
 const GRADES_WITHOUT_SERIES = [
   "CP1", "CP2", "CE1", "CE2", "CM1", "CM2",
   "6e", "5e", "4e", "3e"
@@ -37,7 +32,9 @@ function gradeHasSeries(grade) {
 }
 
 function normalizeSerie(grade, serie) {
-  return gradeHasSeries(grade) ? (serie || "Non précisée") : "Non précisée";
+  return gradeHasSeries(grade)
+    ? (serie || "Non précisée")
+    : "Non précisée";
 }
 
 const SPEED = 1.25;
@@ -48,11 +45,14 @@ const STORAGE_KEY = "klasevia-conversations-v1";
 const MAX_SAVED_CONVERSATIONS = 50;
 
 function makeId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
 }
 
 function makeConversation(settings = {}) {
   const grade = settings.grade || "Terminale";
+
   const serie = normalizeSerie(
     grade,
     settings.serie || "D"
@@ -67,65 +67,103 @@ function makeConversation(settings = {}) {
     updatedAt: now,
     grade,
     serie,
-    subject: settings.subject || "Mathématiques",
-    difficulty: settings.difficulty || "détaillé",
-    mode: settings.mode || "explication",
+    subject:
+      settings.subject || "Mathématiques",
+    difficulty:
+      settings.difficulty || "détaillé",
+    mode:
+      settings.mode || "explication",
     messages: []
   };
 }
 
 function normalizeConversation(conversation) {
-  if (!conversation || typeof conversation !== "object") {
+  if (
+    !conversation ||
+    typeof conversation !== "object"
+  ) {
     return null;
   }
 
-  const grade = conversation.grade || "Terminale";
+  const grade =
+    conversation.grade || "Terminale";
 
   return {
     ...conversation,
     grade,
-    serie: normalizeSerie(grade, conversation.serie),
-    subject: conversation.subject || "Mathématiques",
-    difficulty: conversation.difficulty || "détaillé",
-    mode: conversation.mode || "explication",
-    messages: Array.isArray(conversation.messages)
-      ? conversation.messages
-      : []
+    serie: normalizeSerie(
+      grade,
+      conversation.serie
+    ),
+    subject:
+      conversation.subject ||
+      "Mathématiques",
+    difficulty:
+      conversation.difficulty ||
+      "détaillé",
+    mode:
+      conversation.mode ||
+      "explication",
+    messages:
+      Array.isArray(conversation.messages)
+        ? conversation.messages
+        : []
   };
 }
 
 function loadSavedData() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw =
+      localStorage.getItem(
+        STORAGE_KEY
+      );
 
     if (!raw) {
-      const first = makeConversation();
+      const first =
+        makeConversation();
+
       return {
         conversations: [first],
         activeId: first.id
       };
     }
 
-    const parsed = JSON.parse(raw);
+    const parsed =
+      JSON.parse(raw);
 
-    const conversations = Array.isArray(parsed.conversations)
-      ? parsed.conversations
-          .filter(c =>
-            c &&
-            typeof c.id === "string" &&
-            Array.isArray(c.messages)
-          )
-          .map(normalizeConversation)
-          .filter(Boolean)
-          .slice(0, MAX_SAVED_CONVERSATIONS)
-      : [];
+    const conversations =
+      Array.isArray(
+        parsed.conversations
+      )
+        ? parsed.conversations
+            .filter(
+              c =>
+                c &&
+                typeof c.id ===
+                  "string" &&
+                Array.isArray(
+                  c.messages
+                )
+            )
+            .map(
+              normalizeConversation
+            )
+            .filter(Boolean)
+            .slice(
+              0,
+              MAX_SAVED_CONVERSATIONS
+            )
+        : [];
 
     if (conversations.length) {
-      const activeId = conversations.some(
-        c => c.id === parsed.activeId
-      )
-        ? parsed.activeId
-        : conversations[0].id;
+      const activeId =
+        conversations.some(
+          c =>
+            c.id ===
+            parsed.activeId
+        )
+          ? parsed.activeId
+          : conversations[0].id;
 
       return {
         conversations,
@@ -133,10 +171,12 @@ function loadSavedData() {
       };
     }
   } catch (_) {
-    // Si l'historique est illisible, on démarre une conversation propre.
+    // Si l'historique est illisible,
+    // on démarre une conversation propre.
   }
 
-  const first = makeConversation();
+  const first =
+    makeConversation();
 
   return {
     conversations: [first],
@@ -145,160 +185,316 @@ function loadSavedData() {
 }
 
 function getSpeechRecognition() {
-  if (typeof window === "undefined") return null;
+  if (
+    typeof window ===
+    "undefined"
+  ) {
+    return null;
+  }
 
-  return window.SpeechRecognition ||
+  return (
+    window.SpeechRecognition ||
     window.webkitSpeechRecognition ||
-    null;
+    null
+  );
 }
 
 function chooseFrenchVoice(voices) {
-  const french = voices.filter(v =>
-    /^fr([-_]|$)/i.test(v.lang || "")
-  );
+  const french =
+    voices.filter(v =>
+      /^fr([-_]|$)/i.test(
+        v.lang || ""
+      )
+    );
 
-  return french.find(v =>
-    /natural|naturel|neural|premium|enhanced/i.test(v.name)
-  ) ||
-    french.find(v => /^fr-FR$/i.test(v.lang)) ||
+  return (
+    french.find(v =>
+      /natural|naturel|neural|premium|enhanced/i.test(
+        v.name
+      )
+    ) ||
+    french.find(v =>
+      /^fr-FR$/i.test(
+        v.lang
+      )
+    ) ||
     french[0] ||
-    null;
+    null
+  );
 }
 
-function splitSpeech(text, maxLength = 220) {
+function splitSpeech(
+  text,
+  maxLength = 220
+) {
   const cleaned = text
-    .replace(/```[\s\S]*?```/g, " bloc de code omis ")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/(\$|\\\[|\\\])/g, " ")
-    .replace(/[*_#`>|]/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(
+      /```[\s\S]*?```/g,
+      " bloc de code omis "
+    )
+    .replace(
+      /!\[[^\]]*\]\([^)]*\)/g,
+      ""
+    )
+    .replace(
+      /\[([^\]]+)\]\([^)]*\)/g,
+      "$1"
+    )
+    .replace(
+      /(\$|\\\[|\\\])/g,
+      " "
+    )
+    .replace(
+      /[*_#`>|]/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
     .trim();
 
-  if (!cleaned) return [];
+  if (!cleaned) {
+    return [];
+  }
 
   const sentences =
-    cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleaned];
+    cleaned.match(
+      /[^.!?]+[.!?]+|[^.!?]+$/g
+    ) || [cleaned];
 
   const chunks = [];
   let current = "";
 
   for (const sentence of sentences) {
-    const part = sentence.trim();
+    const part =
+      sentence.trim();
 
-    if (!part) continue;
+    if (!part) {
+      continue;
+    }
 
-    if ((current + " " + part).trim().length <= maxLength) {
-      current = (current + " " + part).trim();
+    if (
+      (
+        current +
+        " " +
+        part
+      ).trim().length <=
+      maxLength
+    ) {
+      current = (
+        current +
+        " " +
+        part
+      ).trim();
     } else {
-      if (current) chunks.push(current);
+      if (current) {
+        chunks.push(current);
+      }
 
-      if (part.length <= maxLength) {
+      if (
+        part.length <=
+        maxLength
+      ) {
         current = part;
       } else {
         current = "";
 
-        for (const word of part.split(/\s+/)) {
+        for (const word of part.split(
+          /\s+/
+        )) {
           if (
-            (current + " " + word).trim().length > maxLength
+            (
+              current +
+              " " +
+              word
+            ).trim().length >
+            maxLength
           ) {
-            if (current) chunks.push(current);
+            if (current) {
+              chunks.push(
+                current
+              );
+            }
+
             current = word;
           } else {
-            current = (current + " " + word).trim();
+            current = (
+              current +
+              " " +
+              word
+            ).trim();
           }
         }
       }
     }
   }
 
-  if (current) chunks.push(current);
+  if (current) {
+    chunks.push(current);
+  }
 
   return chunks;
 }
 
 function readAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+  return new Promise(
+    (resolve, reject) => {
+      const reader =
+        new FileReader();
 
-    reader.onload = () =>
-      resolve(String(reader.result));
+      reader.onload = () =>
+        resolve(
+          String(
+            reader.result
+          )
+        );
 
-    reader.onerror = () =>
-      reject(
-        new Error("Lecture du fichier impossible.")
+      reader.onerror = () =>
+        reject(
+          new Error(
+            "Lecture du fichier impossible."
+          )
+        );
+
+      reader.readAsDataURL(
+        file
       );
-
-    reader.readAsDataURL(file);
-  });
+    }
+  );
 }
 
 function formatDate(value) {
   try {
-    return new Date(value).toLocaleString("fr-FR", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
+    return new Date(
+      value
+    ).toLocaleString(
+      "fr-FR",
+      {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      }
+    );
   } catch (_) {
     return "";
   }
 }
 
 function App() {
-  const [savedData, setSavedData] = useState(loadSavedData);
+  const [savedData, setSavedData] =
+    useState(loadSavedData);
 
-  const [grade, setGrade] = useState("Terminale");
-  const [serie, setSerie] = useState("D");
-  const [subject, setSubject] = useState("Mathématiques");
-  const [difficulty, setDifficulty] = useState("détaillé");
-  const [mode, setMode] = useState("explication");
+  const [grade, setGrade] =
+    useState("Terminale");
 
-  const [text, setText] = useState("");
-  const [image, setImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState("");
-  const [document, setDocument] = useState(null);
-  const [documentText, setDocumentText] = useState("");
-  const [fileName, setFileName] = useState("");
+  const [serie, setSerie] =
+    useState("D");
 
-  const [loading, setLoading] = useState(false);
-  const [loadingConversationId, setLoadingConversationId] = useState(null);
-  const [error, setError] = useState("");
-  const [speaking, setSpeaking] = useState(false);
-  const [listening, setListening] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState("");
-  const [availableVoice, setAvailableVoice] = useState("");
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [recognitionSupported, setRecognitionSupported] = useState(false);
+  const [subject, setSubject] =
+    useState("Mathématiques");
 
-  const fileInputRef = useRef(null);
-  const recognitionRef = useRef(null);
-  const speechRunRef = useRef(0);
-  const speechQueueRef = useRef([]);
-  const speechIndexRef = useRef(0);
+  const [difficulty, setDifficulty] =
+    useState("détaillé");
 
-  const conversations = savedData.conversations;
+  const [mode, setMode] =
+    useState("explication");
+
+  const [text, setText] =
+    useState("");
+
+  const [image, setImage] =
+    useState(null);
+
+  const [imagePreview, setImagePreview] =
+    useState("");
+
+  const [document, setDocument] =
+    useState(null);
+
+  const [documentText, setDocumentText] =
+    useState("");
+
+  const [fileName, setFileName] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [
+    loadingConversationId,
+    setLoadingConversationId
+  ] = useState(null);
+
+  const [error, setError] =
+    useState("");
+
+  const [speaking, setSpeaking] =
+    useState(false);
+
+  const [listening, setListening] =
+    useState(false);
+
+  const [voiceStatus, setVoiceStatus] =
+    useState("");
+
+  const [availableVoice, setAvailableVoice] =
+    useState("");
+
+  const [voiceSupported, setVoiceSupported] =
+    useState(false);
+
+  const [
+    recognitionSupported,
+    setRecognitionSupported
+  ] = useState(false);
+
+  const fileInputRef =
+    useRef(null);
+
+  const recognitionRef =
+    useRef(null);
+
+  const speechRunRef =
+    useRef(0);
+
+  const speechQueueRef =
+    useRef([]);
+
+  const speechIndexRef =
+    useRef(0);
+
+  const conversations =
+    savedData.conversations;
 
   const activeConversation =
     conversations.find(
-      c => c.id === savedData.activeId
+      c =>
+        c.id ===
+        savedData.activeId
     ) || conversations[0];
 
   const messages =
-    activeConversation?.messages || [];
+    activeConversation?.messages ||
+    [];
 
   const answer =
     [...messages]
       .reverse()
-      .find(m => m.role === "assistant")
-      ?.content || "";
+      .find(
+        m =>
+          m.role ===
+          "assistant"
+      )?.content || "";
 
   useEffect(() => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(savedData)
+        JSON.stringify(
+          savedData
+        )
       );
     } catch (_) {
       setError(
@@ -308,13 +504,16 @@ function App() {
   }, [savedData]);
 
   useEffect(() => {
-    const synth = window.speechSynthesis;
-    const Recognition = getSpeechRecognition();
+    const synth =
+      window.speechSynthesis;
+
+    const Recognition =
+      getSpeechRecognition();
 
     setVoiceSupported(
       Boolean(
         synth &&
-        window.SpeechSynthesisUtterance
+          window.SpeechSynthesisUtterance
       )
     );
 
@@ -323,11 +522,14 @@ function App() {
     );
 
     function updateVoice() {
-      if (!synth) return;
+      if (!synth) {
+        return;
+      }
 
-      const voice = chooseFrenchVoice(
-        synth.getVoices()
-      );
+      const voice =
+        chooseFrenchVoice(
+          synth.getVoices()
+        );
 
       setAvailableVoice(
         voice
@@ -347,7 +549,9 @@ function App() {
 
     return () => {
       speechRunRef.current++;
+
       synth?.cancel();
+
       synth?.removeEventListener?.(
         "voiceschanged",
         updateVoice
@@ -359,20 +563,32 @@ function App() {
     };
   }, []);
 
-  function updateConversation(id, updater) {
-    setSavedData(previous => ({
-      ...previous,
-      conversations:
-        previous.conversations.map(c =>
-          c.id === id ? updater(c) : c
-        )
-    }));
+  function updateConversation(
+    id,
+    updater
+  ) {
+    setSavedData(
+      previous => ({
+        ...previous,
+        conversations:
+          previous.conversations.map(
+            c =>
+              c.id === id
+                ? updater(c)
+                : c
+          )
+      })
+    );
   }
 
   function stopSpeaking() {
     speechRunRef.current++;
-    speechQueueRef.current = [];
-    speechIndexRef.current = 0;
+
+    speechQueueRef.current =
+      [];
+
+    speechIndexRef.current =
+      0;
 
     window.speechSynthesis?.cancel();
 
@@ -381,12 +597,18 @@ function App() {
   }
 
   function speakNext(runId) {
-    if (runId !== speechRunRef.current) {
+    if (
+      runId !==
+      speechRunRef.current
+    ) {
       return;
     }
 
-    const synth = window.speechSynthesis;
-    const chunks = speechQueueRef.current;
+    const synth =
+      window.speechSynthesis;
+
+    const chunks =
+      speechQueueRef.current;
 
     if (
       speechIndexRef.current >=
@@ -399,7 +621,9 @@ function App() {
 
     const utterance =
       new SpeechSynthesisUtterance(
-        chunks[speechIndexRef.current]
+        chunks[
+          speechIndexRef.current
+        ]
       );
 
     const voice =
@@ -408,10 +632,12 @@ function App() {
       );
 
     utterance.lang =
-      voice?.lang || "fr-FR";
+      voice?.lang ||
+      "fr-FR";
 
     if (voice) {
-      utterance.voice = voice;
+      utterance.voice =
+        voice;
     }
 
     utterance.rate = SPEED;
@@ -419,47 +645,68 @@ function App() {
     utterance.volume = 1;
 
     utterance.onend = () => {
-      if (runId !== speechRunRef.current) {
+      if (
+        runId !==
+        speechRunRef.current
+      ) {
         return;
       }
 
       speechIndexRef.current++;
+
       speakNext(runId);
     };
 
     utterance.onerror = event => {
-      if (runId !== speechRunRef.current) {
+      if (
+        runId !==
+        speechRunRef.current
+      ) {
         return;
       }
 
       if (
-        event.error === "canceled" ||
-        event.error === "interrupted"
+        event.error ===
+          "canceled" ||
+        event.error ===
+          "interrupted"
       ) {
         return;
       }
 
       setSpeaking(false);
+
       setVoiceStatus(
         "La lecture a rencontré un problème. Réessaie."
       );
     };
 
-    synth.speak(utterance);
+    synth.speak(
+      utterance
+    );
   }
 
-  function startSpeaking(content = answer) {
+  function startSpeaking(
+    content = answer
+  ) {
     if (!content.trim()) {
       setVoiceStatus(
         "Aucune réponse à lire pour le moment."
       );
+
       return;
     }
 
-    if (!("speechSynthesis" in window)) {
+    if (
+      !(
+        "speechSynthesis" in
+        window
+      )
+    ) {
       setVoiceStatus(
         "La lecture vocale n'est pas disponible dans ce navigateur."
       );
+
       return;
     }
 
@@ -471,14 +718,17 @@ function App() {
     speechQueueRef.current =
       splitSpeech(content);
 
-    speechIndexRef.current = 0;
+    speechIndexRef.current =
+      0;
 
     if (
-      !speechQueueRef.current.length
+      !speechQueueRef.current
+        .length
     ) {
       setVoiceStatus(
         "Aucun texte lisible dans cette réponse."
       );
+
       return;
     }
 
@@ -499,6 +749,7 @@ function App() {
 
       setListening(false);
       setVoiceStatus("");
+
       return;
     }
 
@@ -509,6 +760,7 @@ function App() {
       setVoiceStatus(
         "Utilise le microphone du clavier Android pour dicter ta question."
       );
+
       return;
     }
 
@@ -517,10 +769,17 @@ function App() {
     const recognition =
       new Recognition();
 
-    recognition.lang = "fr-FR";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.lang =
+      "fr-FR";
+
+    recognition.continuous =
+      false;
+
+    recognition.interimResults =
+      true;
+
+    recognition.maxAlternatives =
+      1;
 
     recognitionRef.current =
       recognition;
@@ -535,43 +794,53 @@ function App() {
       );
     };
 
-    recognition.onresult = event => {
-      let interim = "";
+    recognition.onresult =
+      event => {
+        let interim = "";
 
-      for (
-        let i = event.resultIndex;
-        i < event.results.length;
-        i++
-      ) {
-        const result =
-          event.results[i];
+        for (
+          let i =
+            event.resultIndex;
+          i <
+          event.results.length;
+          i++
+        ) {
+          const result =
+            event.results[i];
 
-        if (result.isFinal) {
-          finalTranscript +=
-            result[0].transcript + " ";
-        } else {
-          interim +=
-            result[0].transcript;
+          if (
+            result.isFinal
+          ) {
+            finalTranscript +=
+              result[0]
+                .transcript +
+              " ";
+          } else {
+            interim +=
+              result[0]
+                .transcript;
+          }
         }
-      }
 
-      setText(
-        (
-          finalTranscript +
-          interim
-        ).trim()
-      );
-    };
+        setText(
+          (
+            finalTranscript +
+            interim
+          ).trim()
+        );
+      };
 
-    recognition.onerror = event => {
-      setListening(false);
+    recognition.onerror =
+      event => {
+        setListening(false);
 
-      setVoiceStatus(
-        event.error === "not-allowed"
-          ? "Autorise le microphone dans les paramètres du navigateur."
-          : "La reconnaissance vocale a échoué. Réessaie."
-      );
-    };
+        setVoiceStatus(
+          event.error ===
+            "not-allowed"
+            ? "Autorise le microphone dans les paramètres du navigateur."
+            : "La reconnaissance vocale a échoué. Réessaie."
+        );
+      };
 
     recognition.onend = () => {
       setListening(false);
@@ -594,22 +863,32 @@ function App() {
     }
   }
 
-  async function handleFile(file) {
+  async function handleFile(
+    file
+  ) {
     setError("");
 
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
-    const type = file.type;
+    const type =
+      file.type;
+
     const name =
-      file.name || "document";
+      file.name ||
+      "document";
 
     const lowerName =
       name.toLowerCase();
 
     try {
       if (
-        type === "application/pdf" ||
-        lowerName.endsWith(".pdf")
+        type ===
+          "application/pdf" ||
+        lowerName.endsWith(
+          ".pdf"
+        )
       ) {
         if (
           file.size >
@@ -618,18 +897,23 @@ function App() {
           setError(
             "Le PDF doit peser 3 Mo maximum. Essaie de le compresser."
           );
+
           return;
         }
 
         const dataUrl =
-          await readAsDataURL(file);
+          await readAsDataURL(
+            file
+          );
 
         setDocument({
           name,
           mimeType:
             "application/pdf",
           data:
-            dataUrl.split(",")[1]
+            dataUrl.split(
+              ","
+            )[1]
         });
 
         setDocumentText("");
@@ -641,8 +925,11 @@ function App() {
       }
 
       if (
-        type === "text/plain" ||
-        lowerName.endsWith(".txt")
+        type ===
+          "text/plain" ||
+        lowerName.endsWith(
+          ".txt"
+        )
       ) {
         if (
           file.size >
@@ -651,6 +938,7 @@ function App() {
           setError(
             "Le fichier texte doit peser 100 Ko maximum."
           );
+
           return;
         }
 
@@ -658,7 +946,9 @@ function App() {
           await file.text();
 
         setDocument(null);
-        setDocumentText(content);
+        setDocumentText(
+          content
+        );
         setImage(null);
         setImagePreview("");
         setFileName(name);
@@ -673,7 +963,9 @@ function App() {
       ];
 
       if (
-        imageTypes.includes(type)
+        imageTypes.includes(
+          type
+        )
       ) {
         if (
           file.size >
@@ -682,19 +974,27 @@ function App() {
           setError(
             "L'image doit peser 4 Mo maximum."
           );
+
           return;
         }
 
         const dataUrl =
-          await readAsDataURL(file);
+          await readAsDataURL(
+            file
+          );
 
         setImage({
           data:
-            dataUrl.split(",")[1],
+            dataUrl.split(
+              ","
+            )[1],
           mimeType: type
         });
 
-        setImagePreview(dataUrl);
+        setImagePreview(
+          dataUrl
+        );
+
         setDocument(null);
         setDocumentText("");
         setFileName(name);
@@ -720,7 +1020,8 @@ function App() {
     setFileName("");
 
     if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+      fileInputRef.current.value =
+        "";
     }
   }
 
@@ -740,17 +1041,19 @@ function App() {
         mode
       });
 
-    setSavedData(previous => ({
-      conversations: [
-        conversation,
-        ...previous.conversations
-      ].slice(
-        0,
-        MAX_SAVED_CONVERSATIONS
-      ),
-      activeId:
-        conversation.id
-    }));
+    setSavedData(
+      previous => ({
+        conversations: [
+          conversation,
+          ...previous.conversations
+        ].slice(
+          0,
+          MAX_SAVED_CONVERSATIONS
+        ),
+        activeId:
+          conversation.id
+      })
+    );
 
     setText("");
     setError("");
@@ -759,10 +1062,14 @@ function App() {
 
     setVoiceStatus("");
     setLoading(false);
-    setLoadingConversationId(null);
+    setLoadingConversationId(
+      null
+    );
   }
 
-  function openConversation(conversation) {
+  function openConversation(
+    conversation
+  ) {
     stopSpeaking();
 
     try {
@@ -779,28 +1086,35 @@ function App() {
         conversation.serie
       );
 
-    setSavedData(previous => ({
-      ...previous,
-      activeId:
-        conversation.id
-    }));
+    setSavedData(
+      previous => ({
+        ...previous,
+        activeId:
+          conversation.id
+      })
+    );
 
-    setGrade(conversationGrade);
-    setSerie(conversationSerie);
+    setGrade(
+      conversationGrade
+    );
+
+    setSerie(
+      conversationSerie
+    );
 
     setSubject(
       conversation.subject ||
-      "Mathématiques"
+        "Mathématiques"
     );
 
     setDifficulty(
       conversation.difficulty ||
-      "détaillé"
+        "détaillé"
     );
 
     setMode(
       conversation.mode ||
-      "explication"
+        "explication"
     );
 
     setText("");
@@ -811,13 +1125,17 @@ function App() {
     setVoiceStatus("");
   }
 
-  function deleteConversation(id) {
+  function deleteConversation(
+    id
+  ) {
     const remaining =
       conversations.filter(
         c => c.id !== id
       );
 
-    if (remaining.length === 0) {
+    if (
+      remaining.length === 0
+    ) {
       const fresh =
         makeConversation({
           grade,
@@ -828,8 +1146,11 @@ function App() {
         });
 
       setSavedData({
-        conversations: [fresh],
-        activeId: fresh.id
+        conversations: [
+          fresh
+        ],
+        activeId:
+          fresh.id
       });
 
       setText("");
@@ -840,17 +1161,21 @@ function App() {
     }
 
     const nextActiveId =
-      savedData.activeId === id
+      savedData.activeId ===
+      id
         ? remaining[0].id
         : savedData.activeId;
 
     setSavedData({
-      conversations: remaining,
-      activeId: nextActiveId
+      conversations:
+        remaining,
+      activeId:
+        nextActiveId
     });
 
     if (
-      savedData.activeId === id
+      savedData.activeId ===
+      id
     ) {
       const next =
         remaining.find(
@@ -860,36 +1185,43 @@ function App() {
         );
 
       if (next) {
-        openConversation(next);
+        openConversation(
+          next
+        );
       }
     }
   }
 
-  function handleGradeChange(newGrade) {
+  function handleGradeChange(
+    newGrade
+  ) {
     setGrade(newGrade);
 
-    /*
-     * Pour CP1 à 3e, aucune série n'existe.
-     * On force donc automatiquement "Non précisée".
-     */
-    if (!gradeHasSeries(newGrade)) {
-      setSerie("Non précisée");
+    if (
+      !gradeHasSeries(
+        newGrade
+      )
+    ) {
+      setSerie(
+        "Non précisée"
+      );
+
       return;
     }
 
-    /*
-     * Si on passe à une classe avec série,
-     * on conserve la série actuelle si elle est valide.
-     * Sinon, on utilise "Non précisée".
-     */
-    setSerie(currentSerie =>
-      SERIES.includes(currentSerie)
-        ? currentSerie
-        : "Non précisée"
+    setSerie(
+      currentSerie =>
+        SERIES.includes(
+          currentSerie
+        )
+          ? currentSerie
+          : "Non précisée"
     );
   }
 
-  async function submitQuestion(event) {
+  async function submitQuestion(
+    event
+  ) {
     event?.preventDefault();
 
     setError("");
@@ -906,6 +1238,7 @@ function App() {
       setError(
         "Écris une question ou ajoute un fichier."
       );
+
       return;
     }
 
@@ -916,12 +1249,6 @@ function App() {
       activeConversation.messages ||
       [];
 
-    /*
-     * Sécurité supplémentaire :
-     * même si une ancienne conversation
-     * contient une série pour une classe
-     * de CP1 à 3e, elle sera ignorée.
-     */
     const effectiveSerie =
       normalizeSerie(
         grade,
@@ -955,23 +1282,20 @@ function App() {
 
     const userMessage = {
       role: "user",
-      content: visibleQuestion,
+      content:
+        visibleQuestion,
       id: makeId(),
       createdAt:
         new Date().toISOString()
     };
 
-    /*
-     * Les anciens messages servent de contexte.
-     * Les fichiers précédents ne sont pas conservés
-     * dans l'historique.
-     */
     const history =
       currentMessages
         .filter(
           m =>
             m.role === "user" ||
-            m.role === "assistant"
+            m.role ===
+              "assistant"
         )
         .map(m => ({
           role: m.role,
@@ -994,7 +1318,8 @@ function App() {
         ...c,
         title,
         grade,
-        serie: effectiveSerie,
+        serie:
+          effectiveSerie,
         subject,
         difficulty,
         mode,
@@ -1011,36 +1336,39 @@ function App() {
     removeFile();
 
     setLoading(true);
+
     setLoadingConversationId(
       conversationId
     );
 
     try {
       const response =
-        await fetch("/api/tutor", {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-          body: JSON.stringify({
-            mode,
-            grade,
-            /*
-             * Klasévia recevra toujours
-             * "Non précisée" pour CP1 à 3e.
-             */
-            serie: effectiveSerie,
-            subject,
-            difficulty,
-            text:
-              fullText ||
-              "Analyse le fichier joint et explique son contenu.",
-            image,
-            document,
-            history
-          })
-        });
+        await fetch(
+          "/api/tutor",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify(
+              {
+                mode,
+                grade,
+                serie:
+                  effectiveSerie,
+                subject,
+                difficulty,
+                text:
+                  fullText ||
+                  "Analyse le fichier joint et explique son contenu.",
+                image,
+                document,
+                history
+              }
+            )
+          }
+        );
 
       const data =
         await response.json();
@@ -1058,13 +1386,15 @@ function App() {
         );
       }
 
-      const assistantMessage = {
-        role: "assistant",
-        content: data.answer,
-        id: makeId(),
-        createdAt:
-          new Date().toISOString()
-      };
+      const assistantMessage =
+        {
+          role: "assistant",
+          content:
+            data.answer,
+          id: makeId(),
+          createdAt:
+            new Date().toISOString()
+        };
 
       updateConversation(
         conversationId,
@@ -1085,7 +1415,9 @@ function App() {
       );
     } finally {
       setLoading(false);
-      setLoadingConversationId(null);
+      setLoadingConversationId(
+        null
+      );
     }
   }
 
@@ -1105,21 +1437,27 @@ function App() {
       <style>{`
         .klasevia-app{max-width:1000px;margin:0 auto;padding:18px;color:#18352d;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
         .k-hero{background:linear-gradient(135deg,#e8f6ee,#f5fbf7);border:1px solid #d6e8dd;border-radius:22px;padding:24px;margin-bottom:18px}
-        .k-hero h1{margin:0 0 8px;font-size:30px}.k-hero p{margin:0;line-height:1.6}
+        .k-hero h1{margin:0 0 8px;font-size:30px}
+        .k-hero p{margin:0;line-height:1.6}
         .k-layout{display:grid;grid-template-columns:minmax(220px,270px) minmax(0,1fr);gap:16px;align-items:start}
         .k-card{background:#fff;border:1px solid #dce6df;border-radius:18px;padding:20px;margin:0 0 16px;box-shadow:0 4px 18px #19382b0a;min-width:0}
         .k-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-        .k-field{display:flex;flex-direction:column;gap:6px}.k-field label{font-size:14px;font-weight:650}
+        .k-field{display:flex;flex-direction:column;gap:6px}
+        .k-field label{font-size:14px;font-weight:650}
         .k-field select,.k-field textarea,.k-field input{width:100%;box-sizing:border-box;border:1px solid #cbd9d0;border-radius:11px;padding:12px;font:inherit;background:white;color:#18352d}
         .k-field textarea{min-height:120px;resize:vertical}
         .k-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
         .k-btn{border:0;border-radius:12px;padding:12px 16px;background:#176c4c;color:white;font:inherit;font-weight:650;cursor:pointer}
-        .k-btn.secondary{background:#eaf4ed;color:#19583f}.k-btn.stop{background:#8b3333}.k-btn:disabled{opacity:.55;cursor:not-allowed}
+        .k-btn.secondary{background:#eaf4ed;color:#19583f}
+        .k-btn.stop{background:#8b3333}
+        .k-btn:disabled{opacity:.55;cursor:not-allowed}
         .k-note{color:#526a5e;font-size:13px;line-height:1.5}
         .k-error{background:#fff0ee;color:#8b2525;padding:12px;border-radius:10px;margin-top:12px;overflow-wrap:anywhere}
         .k-status{background:#edf7f0;color:#245f43;padding:10px;border-radius:10px;margin-top:12px;font-size:14px;overflow-wrap:anywhere}
-        .k-answer{line-height:1.75;overflow-wrap:anywhere}.k-answer img{max-width:100%}
-        .k-answer table{display:block;max-width:100%;overflow-x:auto}.k-answer pre{overflow-x:auto;padding:12px;background:#f4f7f5;border-radius:10px}
+        .k-answer{line-height:1.75;overflow-wrap:anywhere}
+        .k-answer img{max-width:100%}
+        .k-answer table{display:block;max-width:100%;overflow-x:auto}
+        .k-answer pre{overflow-x:auto;padding:12px;background:#f4f7f5;border-radius:10px}
         .k-preview{max-width:100%;max-height:260px;border-radius:12px;margin-top:12px}
         .k-answer .katex-display{overflow-x:auto;overflow-y:hidden;padding:5px 0}
         .k-history-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -1147,16 +1485,21 @@ function App() {
         <h1>📚 Klasévia</h1>
 
         <p>
-          Ton compagnon d’apprentissage :
-          pose tes questions, partage tes
-          documents et progresse à ton rythme.
+          Ton compagnon
+          d’apprentissage :
+          pose tes questions,
+          partage tes documents
+          et progresse à ton
+          rythme.
         </p>
       </header>
 
       <div className="k-layout">
         <aside className="k-card">
           <div className="k-history-title">
-            <h2>🗂️ Mes conversations</h2>
+            <h2>
+              🗂️ Mes conversations
+            </h2>
           </div>
 
           <button
@@ -1167,12 +1510,14 @@ function App() {
             }
             disabled={loading}
           >
-            ＋ Nouvelle conversation
+            ＋ Nouvelle
+            conversation
           </button>
 
           <p className="k-note">
             Tes discussions sont
-            sauvegardées dans ce navigateur.
+            sauvegardées dans ce
+            navigateur.
           </p>
 
           <div className="k-history-list">
@@ -1186,64 +1531,78 @@ function App() {
                     a.updatedAt
                   )
               )
-              .map(conversation => (
-                <div
-                  className="k-history-item"
-                  key={conversation.id}
-                >
-                  <button
-                    type="button"
-                    className={`k-history-open ${
-                      conversation.id ===
-                      savedData.activeId
-                        ? "active"
-                        : ""
-                    }`}
-                    onClick={() =>
-                      openConversation(
-                        conversation
-                      )
+              .map(
+                conversation => (
+                  <div
+                    className="k-history-item"
+                    key={
+                      conversation.id
                     }
-                    disabled={loading}
                   >
-                    <span className="k-history-name">
-                      {conversation.title}
-                    </span>
-
-                    <span className="k-history-date">
-                      {formatDate(
-                        conversation.updatedAt
-                      )}
-                    </span>
-
-                    <span className="k-history-date">
-                      {conversation.messages.length}{" "}
-                      message(s)
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="k-delete"
-                    title="Supprimer cette conversation"
-                    aria-label={`Supprimer ${conversation.title}`}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          "Supprimer définitivement cette conversation ?"
+                    <button
+                      type="button"
+                      className={`k-history-open ${
+                        conversation.id ===
+                        savedData.activeId
+                          ? "active"
+                          : ""
+                      }`}
+                      onClick={() =>
+                        openConversation(
+                          conversation
                         )
-                      ) {
-                        deleteConversation(
-                          conversation.id
-                        );
                       }
-                    }}
-                    disabled={loading}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
+                      disabled={
+                        loading
+                      }
+                    >
+                      <span className="k-history-name">
+                        {
+                          conversation.title
+                        }
+                      </span>
+
+                      <span className="k-history-date">
+                        {formatDate(
+                          conversation.updatedAt
+                        )}
+                      </span>
+
+                      <span className="k-history-date">
+                        {
+                          conversation
+                            .messages
+                            .length
+                        }{" "}
+                        message(s)
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="k-delete"
+                      title="Supprimer cette conversation"
+                      aria-label={`Supprimer ${conversation.title}`}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            "Supprimer définitivement cette conversation ?"
+                          )
+                        ) {
+                          deleteConversation(
+                            conversation.id
+                          );
+                        }
+                      }}
+                      disabled={
+                        loading
+                      }
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                )
+              )}
           </div>
         </aside>
 
@@ -1268,20 +1627,21 @@ function App() {
                     )
                   }
                 >
-                  {CLASSES.map(item => (
-                    <option key={item}>
-                      {item}
-                    </option>
-                  ))}
+                  {CLASSES.map(
+                    item => (
+                      <option
+                        key={item}
+                      >
+                        {item}
+                      </option>
+                    )
+                  )}
                 </select>
               </div>
 
-              {/*
-               * Le champ Série n'est affiché
-               * que pour les classes qui
-               * peuvent réellement avoir une série.
-               */}
-              {gradeHasSeries(grade) && (
+              {gradeHasSeries(
+                grade
+              ) && (
                 <div className="k-field">
                   <label htmlFor="k-serie">
                     Série
@@ -1296,13 +1656,15 @@ function App() {
                       )
                     }
                   >
-                    {SERIES.map(item => (
-                      <option
-                        key={item}
-                      >
-                        {item}
-                      </option>
-                    ))}
+                    {SERIES.map(
+                      item => (
+                        <option
+                          key={item}
+                        >
+                          {item}
+                        </option>
+                      )
+                    )}
                   </select>
                 </div>
               )}
@@ -1321,13 +1683,15 @@ function App() {
                     )
                   }
                 >
-                  {SUBJECTS.map(item => (
-                    <option
-                      key={item}
-                    >
-                      {item}
-                    </option>
-                  ))}
+                  {SUBJECTS.map(
+                    item => (
+                      <option
+                        key={item}
+                      >
+                        {item}
+                      </option>
+                    )
+                  )}
                 </select>
               </div>
 
@@ -1379,19 +1743,27 @@ function App() {
                   </option>
 
                   <option value="détaillé">
-                    Détaillé, étape par étape
+                    Détaillé, étape par
+                    étape
                   </option>
                 </select>
               </div>
             </div>
 
-            <form onSubmit={submitQuestion}>
+            <form
+              onSubmit={
+                submitQuestion
+              }
+            >
               <div
                 className="k-field"
-                style={{ marginTop: 16 }}
+                style={{
+                  marginTop: 16
+                }}
               >
                 <label htmlFor="k-question">
-                  Ta question ou ton cours
+                  Ta question ou ton
+                  cours
                 </label>
 
                 <textarea
@@ -1433,7 +1805,9 @@ function App() {
                 </button>
 
                 <input
-                  ref={fileInputRef}
+                  ref={
+                    fileInputRef
+                  }
                   type="file"
                   accept=".pdf,.txt,application/pdf,text/plain,image/jpeg,image/png,image/webp"
                   style={{
@@ -1444,7 +1818,8 @@ function App() {
                       e.target.files?.[0]
                     );
 
-                    e.target.value = "";
+                    e.target.value =
+                      "";
                   }}
                 />
               </div>
@@ -1464,7 +1839,8 @@ function App() {
                         removeFile
                       }
                     >
-                      Retirer le fichier
+                      Retirer le
+                      fichier
                     </button>
                   </div>
                 </div>
@@ -1472,16 +1848,19 @@ function App() {
 
               {imagePreview && (
                 <img
-                  src={imagePreview}
+                  src={
+                    imagePreview
+                  }
                   alt="Aperçu du fichier image"
                   className="k-preview"
                 />
               )}
 
               <p className="k-note">
-                Formats acceptés : PDF
-                (3 Mo maximum), TXT
-                (100 Ko maximum), images
+                Formats acceptés :
+                PDF (3 Mo maximum),
+                TXT (100 Ko
+                maximum), images
                 JPG, PNG ou WebP
                 (4 Mo maximum).
               </p>
@@ -1505,7 +1884,8 @@ function App() {
                   }
                   disabled={loading}
                 >
-                  Effacer le brouillon
+                  Effacer le
+                  brouillon
                 </button>
               </div>
             </form>
@@ -1534,12 +1914,14 @@ function App() {
               💬 Conversation
             </h2>
 
-            {messages.length === 0 &&
+            {messages.length ===
+              0 &&
               !loading && (
                 <div className="k-empty">
                   <p>
-                    Cette conversation
-                    est encore vide.
+                    Cette
+                    conversation est
+                    encore vide.
                   </p>
 
                   <p>
@@ -1550,72 +1932,83 @@ function App() {
                 </div>
               )}
 
-            {messages.map(message => (
-              <article
-                key={message.id}
-                className={`k-message ${
-                  message.role === "user"
-                    ? "user"
-                    : "assistant"
-                }`}
-              >
-                <div className="k-message-label">
-                  {message.role === "user"
-                    ? "🙋 Ta question"
-                    : "📚 Klasévia"}
-                </div>
-
-                <div className="k-message-content">
-                  {message.role ===
-                  "assistant" ? (
-                    <ReactMarkdown
-                      remarkPlugins={[
-                        remarkMath
-                      ]}
-                      rehypePlugins={[
-                        rehypeKatex
-                      ]}
-                    >
-                      {
-                        message.content
-                      }
-                    </ReactMarkdown>
-                  ) : (
-                    <p
-                      style={{
-                        whiteSpace:
-                          "pre-wrap",
-                        margin: 0
-                      }}
-                    >
-                      {
-                        message.content
-                      }
-                    </p>
-                  )}
-                </div>
-
-                {message.role ===
-                  "assistant" && (
-                  <div className="k-actions">
-                    <button
-                      type="button"
-                      className="k-btn secondary"
-                      onClick={() =>
-                        startSpeaking(
-                          message.content
-                        )
-                      }
-                      disabled={
-                        !voiceSupported
-                      }
-                    >
-                      🔊 Lire cette réponse
-                    </button>
+            {messages.map(
+              message => (
+                <article
+                  key={message.id}
+                  className={`k-message ${
+                    message.role ===
+                    "user"
+                      ? "user"
+                      : "assistant"
+                  }`}
+                >
+                  <div className="k-message-label">
+                    {message.role ===
+                    "user"
+                      ? "🙋 Ta question"
+                      : "📚 Klasévia"}
                   </div>
-                )}
-              </article>
-            ))}
+
+                  <div className="k-message-content">
+                    {message.role ===
+                    "assistant" ? (
+                      <ReactMarkdown
+                        remarkPlugins={[
+                          remarkMath
+                        ]}
+                        rehypePlugins={[
+                          [
+                            rehypeKatex,
+                            {
+                              output:
+                                "html"
+                            }
+                          ]
+                        ]}
+                      >
+                        {
+                          message.content
+                        }
+                      </ReactMarkdown>
+                    ) : (
+                      <p
+                        style={{
+                          whiteSpace:
+                            "pre-wrap",
+                          margin: 0
+                        }}
+                      >
+                        {
+                          message.content
+                        }
+                      </p>
+                    )}
+                  </div>
+
+                  {message.role ===
+                    "assistant" && (
+                    <div className="k-actions">
+                      <button
+                        type="button"
+                        className="k-btn secondary"
+                        onClick={() =>
+                          startSpeaking(
+                            message.content
+                          )
+                        }
+                        disabled={
+                          !voiceSupported
+                        }
+                      >
+                        🔊 Lire cette
+                        réponse
+                      </button>
+                    </div>
+                  )}
+                </article>
+              )
+            )}
 
             {loading && (
               <div
@@ -1643,8 +2036,9 @@ function App() {
                       !voiceSupported
                     }
                   >
-                    🔊 Écouter la dernière
-                    réponse à {SPEED}×
+                    🔊 Écouter la
+                    dernière réponse
+                    à {SPEED}×
                   </button>
                 ) : (
                   <button
@@ -1654,7 +2048,8 @@ function App() {
                       stopSpeaking
                     }
                   >
-                    ⏹ Arrêter la lecture
+                    ⏹ Arrêter la
+                    lecture
                   </button>
                 )}
               </div>
@@ -1670,8 +2065,8 @@ function App() {
             {!voiceSupported && (
               <p className="k-note">
                 Pour écouter les
-                réponses, essaie Chrome
-                sur Android.
+                réponses, essaie
+                Chrome sur Android.
               </p>
             )}
 
@@ -1703,4 +2098,6 @@ function App() {
 
 createRoot(
   document.getElementById("root")
-).render(<App />);
+).render(
+  <App />
+);
