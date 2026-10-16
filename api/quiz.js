@@ -226,27 +226,39 @@ function cleanQuestion(question) {
     return null;
   }
 
-  const cleaned = {
-    questionId: String(question.questionId || "").trim(),
-    questionText: String(question.questionText || "").trim(),
-    answerType: String(question.answerType || "").trim(),
+  return {
+    questionId: String(
+      question.questionId || ""
+    ).trim(),
+
+    questionText: String(
+      question.questionText || ""
+    ).trim(),
+
+    answerType: String(
+      question.answerType || ""
+    ).trim(),
+
     choices: Array.isArray(question.choices)
       ? question.choices
-          .map((choice) => String(choice || "").trim())
+          .map((choice) =>
+            String(choice || "").trim()
+          )
           .filter(Boolean)
       : [],
+
     correctAnswer: String(
       question.correctAnswer || ""
     ).trim(),
+
     explanation: String(
       question.explanation || ""
     ).trim(),
+
     difficulty: String(
       question.difficulty || "normal"
     ).trim()
   };
-
-  return cleaned;
 }
 
 function validateQuestion(question) {
@@ -332,7 +344,9 @@ function validateQuestion(question) {
   }
 
   if (cleaned.answerType === "number") {
-    if (parseNumber(cleaned.correctAnswer) === null) {
+    if (
+      parseNumber(cleaned.correctAnswer) === null
+    ) {
       return {
         valid: false,
         question: null
@@ -375,8 +389,9 @@ async function generateQuestion({
     askedQuestions.length > 0
       ? askedQuestions
           .slice(-15)
-          .map((question, index) =>
-            `${index + 1}. ${question}`
+          .map(
+            (question, index) =>
+              `${index + 1}. ${question}`
           )
           .join("\n")
       : "Aucune question précédente.";
@@ -446,16 +461,15 @@ Tu dois donc effectuer les calculs mathématiques correctement avant de répondr
         ]
       }
     ],
+
     generationConfig: {
-      responseFormat: {
-        text: {
-          mimeType: "application/json",
-          schema: QUESTION_SCHEMA
-        }
-      },
+      responseMimeType: "application/json",
+      responseSchema: QUESTION_SCHEMA,
+
       thinkingConfig: {
         thinkingLevel: "medium"
       },
+
       maxOutputTokens: 2048
     }
   };
@@ -466,9 +480,11 @@ Tu dois donc effectuer les calculs mathématiques correctement avant de répondr
     try {
       const response = await fetch(url, {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json"
         },
+
         body: JSON.stringify(body)
       });
 
@@ -483,7 +499,8 @@ Tu dois donc effectuer les calculs mathématiques correctement avant de répondr
         continue;
       }
 
-      const text = extractGeminiText(data);
+      const text =
+        extractGeminiText(data);
 
       if (!text) {
         lastError = new Error(
@@ -533,7 +550,9 @@ Tu dois donc effectuer les calculs mathématiques correctement avant de répondr
 function displayCorrectAnswer(question) {
   if (question.answerType === "qcm") {
     const choice =
-      normalizeChoice(question.correctAnswer);
+      normalizeChoice(
+        question.correctAnswer
+      );
 
     const index = {
       A: 0,
@@ -549,7 +568,10 @@ function displayCorrectAnswer(question) {
       return `${choice}. ${question.choices[index]}`;
     }
 
-    return choice || question.correctAnswer;
+    return (
+      choice ||
+      question.correctAnswer
+    );
   }
 
   return question.correctAnswer;
@@ -594,8 +616,7 @@ function formatAnswerResult({
   userAnswer,
   isCorrect,
   newScore,
-  answeredNumber,
-  total
+  answeredNumber
 }) {
   let text = "";
 
@@ -605,7 +626,8 @@ function formatAnswerResult({
       `Ta réponse : ${userAnswer}\n\n`;
 
     if (question.explanation) {
-      text += `${question.explanation}\n`;
+      text +=
+        `${question.explanation}\n`;
     }
   } else {
     text +=
@@ -614,7 +636,8 @@ function formatAnswerResult({
       `Bonne réponse : ${displayCorrectAnswer(question)}\n\n`;
 
     if (question.explanation) {
-      text += `${question.explanation}\n`;
+      text +=
+        `${question.explanation}\n`;
     }
   }
 
@@ -638,7 +661,9 @@ function sanitizeQuizState(state) {
   }
 
   const validation =
-    validateQuestion(state.currentQuestion);
+    validateQuestion(
+      state.currentQuestion
+    );
 
   if (!validation.valid) {
     return null;
@@ -651,7 +676,9 @@ function sanitizeQuizState(state) {
       : TOTAL_QUESTIONS;
 
   const questionNumber =
-    Number.isInteger(state.questionNumber) &&
+    Number.isInteger(
+      state.questionNumber
+    ) &&
     state.questionNumber > 0
       ? state.questionNumber
       : 1;
@@ -666,20 +693,31 @@ function sanitizeQuizState(state) {
     Array.isArray(state.askedQuestions)
       ? state.askedQuestions
           .map((question) =>
-            String(question || "").trim()
+            String(
+              question || ""
+            ).trim()
           )
           .filter(Boolean)
       : [];
 
   return {
     active: true,
+
     total,
+
     questionNumber,
+
     score,
-    topic: String(state.topic || "").trim(),
+
+    topic: String(
+      state.topic || ""
+    ).trim(),
+
     currentQuestion:
       validation.question,
+
     askedQuestions,
+
     startedAt:
       state.startedAt ||
       new Date().toISOString()
@@ -694,32 +732,46 @@ async function handleStart({
   subject,
   difficulty
 }) {
-  const topic = String(message || "").trim();
+  const topic =
+    String(message || "").trim();
 
   const initialDifficulty =
-    normalizeDifficulty(difficulty);
+    normalizeDifficulty(
+      difficulty
+    );
 
-  const question = await generateQuestion({
-    apiKey,
-    grade,
-    serie,
-    subject,
-    topic,
-    difficulty: initialDifficulty,
-    askedQuestions: []
-  });
+  const question =
+    await generateQuestion({
+      apiKey,
+      grade,
+      serie,
+      subject,
+      topic,
+      difficulty:
+        initialDifficulty,
+      askedQuestions: []
+    });
 
   const quizState = {
     active: true,
+
     total: TOTAL_QUESTIONS,
+
     questionNumber: 1,
+
     score: 0,
+
     topic,
-    currentQuestion: question,
+
+    currentQuestion:
+      question,
+
     askedQuestions: [
       question.questionText
     ],
-    startedAt: new Date().toISOString()
+
+    startedAt:
+      new Date().toISOString()
   };
 
   const messageText =
@@ -746,7 +798,9 @@ async function handleAnswer({
   quizState
 }) {
   const state =
-    sanitizeQuizState(quizState);
+    sanitizeQuizState(
+      quizState
+    );
 
   if (!state) {
     throw new Error(
@@ -766,10 +820,11 @@ async function handleAnswer({
     );
   }
 
-  const isCorrect = gradeAnswer(
-    currentQuestion,
-    userAnswer
-  );
+  const isCorrect =
+    gradeAnswer(
+      currentQuestion,
+      userAnswer
+    );
 
   const answeredNumber =
     state.questionNumber;
@@ -780,29 +835,45 @@ async function handleAnswer({
 
   let resultText =
     formatAnswerResult({
-      question: currentQuestion,
+      question:
+        currentQuestion,
+
       userAnswer,
+
       isCorrect,
+
       newScore,
-      answeredNumber,
-      total: state.total
+
+      answeredNumber
     });
 
-  if (answeredNumber >= state.total) {
+  if (
+    answeredNumber >=
+    state.total
+  ) {
     resultText +=
       "\n\n🏁 Quiz terminé !\n\n" +
       `Score final : ${newScore}/${state.total}`;
 
-    if (newScore === state.total) {
+    if (
+      newScore ===
+      state.total
+    ) {
       resultText +=
         "\n🌟 Excellent ! Toutes les réponses sont correctes.";
     } else if (
-      newScore >= Math.ceil(state.total * 0.8)
+      newScore >=
+      Math.ceil(
+        state.total * 0.8
+      )
     ) {
       resultText +=
         "\n👏 Très bon travail !";
     } else if (
-      newScore >= Math.ceil(state.total * 0.5)
+      newScore >=
+      Math.ceil(
+        state.total * 0.5
+      )
     ) {
       resultText +=
         "\n💪 Bon travail. Continue à t'entraîner !";
@@ -813,16 +884,25 @@ async function handleAnswer({
 
     const finishedState = {
       ...state,
+
       active: false,
-      questionNumber: answeredNumber,
+
+      questionNumber:
+        answeredNumber,
+
       score: newScore,
-      currentQuestion: null,
-      finishedAt: new Date().toISOString()
+
+      currentQuestion:
+        null,
+
+      finishedAt:
+        new Date().toISOString()
     };
 
     return {
       message: resultText,
-      quizState: finishedState
+      quizState:
+        finishedState
     };
   }
 
@@ -843,7 +923,8 @@ async function handleAnswer({
       serie,
       subject,
       topic: state.topic,
-      difficulty: nextDifficulty,
+      difficulty:
+        nextDifficulty,
       askedQuestions:
         state.askedQuestions
     });
@@ -855,10 +936,17 @@ async function handleAnswer({
 
   const updatedState = {
     ...state,
+
     active: true,
-    questionNumber: nextQuestionNumber,
+
+    questionNumber:
+      nextQuestionNumber,
+
     score: newScore,
-    currentQuestion: nextQuestion,
+
+    currentQuestion:
+      nextQuestion,
+
     askedQuestions:
       updatedAskedQuestions
   };
@@ -873,14 +961,19 @@ async function handleAnswer({
 
   return {
     message: resultText,
-    quizState: updatedState
+    quizState:
+      updatedState
   };
 }
 
-export default async function handler(req, res) {
+export default async function handler(
+  req,
+  res
+) {
   if (req.method !== "POST") {
     return res.status(405).json({
-      error: "Méthode non autorisée."
+      error:
+        "Méthode non autorisée."
     });
   }
 
@@ -915,7 +1008,9 @@ export default async function handler(req, res) {
       });
     }
 
-    if (action === "start") {
+    if (
+      action === "start"
+    ) {
       const result =
         await handleStart({
           apiKey,
@@ -926,7 +1021,9 @@ export default async function handler(req, res) {
           difficulty
         });
 
-      return res.status(200).json(result);
+      return res
+        .status(200)
+        .json(result);
     }
 
     const result =
@@ -940,7 +1037,9 @@ export default async function handler(req, res) {
         quizState
       });
 
-    return res.status(200).json(result);
+    return res
+      .status(200)
+      .json(result);
   } catch (error) {
     console.error(
       "Erreur API quiz:",
