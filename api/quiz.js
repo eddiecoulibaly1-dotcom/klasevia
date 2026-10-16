@@ -33,17 +33,18 @@ const QUESTION_SCHEMA = {
     correctAnswer: {
       type: "string",
       description:
-        "Réponse correcte. QCM=A/B/C/D, fraction=a/b, nombre=valeur numérique."
+        "Réponse correcte canonique."
     },
     explanation: {
       type: "string",
       description:
-        "Explication pédagogique courte et exacte."
+        "Explication pédagogique courte et correcte."
     },
     difficulty: {
       type: "string",
       enum: ["facile", "normal", "difficile"],
-      description: "Difficulté de la question."
+      description:
+        "Difficulté de la question."
     }
   },
   required: [
@@ -57,11 +58,6 @@ const QUESTION_SCHEMA = {
   ]
 };
 
-
-/* =========================================================
-   OUTILS GÉNÉRAUX
-   ========================================================= */
-
 function normalizeText(value) {
   return String(value || "")
     .trim()
@@ -69,7 +65,6 @@ function normalizeText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 }
-
 
 function gcd(a, b) {
   let x = Math.abs(a);
@@ -84,22 +79,21 @@ function gcd(a, b) {
   return x || 1;
 }
 
-
 function parseFraction(value) {
   const text = String(value || "")
     .trim()
     .replace(/\s+/g, "");
 
   const match = text.match(
-    /^([+-]?\d+)\/([+-]?\d+)$/
+    /^(-?\d+)\/(-?\d+)$/
   );
 
   if (!match) {
     return null;
   }
 
-  const numerator = Number(match[1]);
-  const denominator = Number(match[2]);
+  let numerator = Number(match[1]);
+  let denominator = Number(match[2]);
 
   if (
     !Number.isFinite(numerator) ||
@@ -109,26 +103,25 @@ function parseFraction(value) {
     return null;
   }
 
-  let n = numerator;
-  let d = denominator;
-
-  if (d < 0) {
-    n = -n;
-    d = -d;
+  if (denominator < 0) {
+    numerator *= -1;
+    denominator *= -1;
   }
 
-  const divisor = gcd(n, d);
+  const divisor = gcd(
+    numerator,
+    denominator
+  );
 
   return {
-    numerator: n / divisor,
-    denominator: d / divisor
+    numerator: numerator / divisor,
+    denominator: denominator / divisor
   };
 }
 
-
-function fractionsEqual(firstValue, secondValue) {
-  const first = parseFraction(firstValue);
-  const second = parseFraction(secondValue);
+function fractionsEqual(a, b) {
+  const first = parseFraction(a);
+  const second = parseFraction(b);
 
   if (!first || !second) {
     return false;
@@ -139,7 +132,6 @@ function fractionsEqual(firstValue, secondValue) {
     first.denominator === second.denominator
   );
 }
-
 
 function parseNumber(value) {
   const text = String(value || "")
@@ -158,10 +150,9 @@ function parseNumber(value) {
     : null;
 }
 
-
-function numbersEqual(firstValue, secondValue) {
-  const first = parseNumber(firstValue);
-  const second = parseNumber(secondValue);
+function numbersEqual(a, b) {
+  const first = parseNumber(a);
+  const second = parseNumber(b);
 
   if (
     first === null ||
@@ -170,26 +161,22 @@ function numbersEqual(firstValue, secondValue) {
     return false;
   }
 
-  return Math.abs(first - second) < 0.000001;
+  return (
+    Math.abs(first - second) < 0.000001
+  );
 }
-
 
 function normalizeChoice(value) {
   const text = normalizeText(value);
 
   const match = text.match(
-    /^([abcd])(?:[\.\)\-:]|\s|$)/
+    /^([abcd])(?:[\.\)\-:]|$)/
   );
 
   return match
     ? match[1].toUpperCase()
     : "";
 }
-
-
-/* =========================================================
-   VALIDATION DES QUESTIONS
-   ========================================================= */
 
 function validateQuestion(question) {
   if (!question) {
@@ -199,20 +186,12 @@ function validateQuestion(question) {
   }
 
   if (
-    typeof question.questionId !== "string" ||
-    !question.questionId.trim()
+    !question.questionId ||
+    !question.questionText ||
+    !question.correctAnswer
   ) {
     throw new Error(
-      "Identifiant de question invalide."
-    );
-  }
-
-  if (
-    typeof question.questionText !== "string" ||
-    !question.questionText.trim()
-  ) {
-    throw new Error(
-      "Énoncé de question invalide."
+      "La question générée est incomplète."
     );
   }
 
@@ -228,57 +207,14 @@ function validateQuestion(question) {
     );
   }
 
-  if (
-    typeof question.correctAnswer !== "string" ||
-    !question.correctAnswer.trim()
-  ) {
-    throw new Error(
-      "Réponse correcte absente."
-    );
+  if (!Array.isArray(question.choices)) {
+    question.choices = [];
   }
 
-  if (
-    typeof question.explanation !== "string" ||
-    !question.explanation.trim()
-  ) {
-    throw new Error(
-      "Explication absente."
-    );
-  }
-
-  if (
-    ![
-      "facile",
-      "normal",
-      "difficile"
-    ].includes(question.difficulty)
-  ) {
-    question.difficulty = "normal";
-  }
-
-  if (
-    question.answerType === "qcm"
-  ) {
-    if (
-      !Array.isArray(question.choices) ||
-      question.choices.length !== 4
-    ) {
+  if (question.answerType === "qcm") {
+    if (question.choices.length !== 4) {
       throw new Error(
         "Un QCM doit contenir exactement quatre choix."
-      );
-    }
-
-    question.choices = question.choices.map(
-      choice => String(choice || "").trim()
-    );
-
-    if (
-      question.choices.some(
-        choice => !choice
-      )
-    ) {
-      throw new Error(
-        "Un choix du QCM est vide."
       );
     }
 
@@ -293,7 +229,7 @@ function validateQuestion(question) {
       )
     ) {
       throw new Error(
-        "La réponse correcte du QCM doit être A, B, C ou D."
+        "La bonne réponse du QCM doit être A, B, C ou D."
       );
     }
 
@@ -301,9 +237,7 @@ function validateQuestion(question) {
       correctChoice;
   }
 
-  if (
-    question.answerType === "fraction"
-  ) {
+  if (question.answerType === "fraction") {
     if (
       !parseFraction(
         question.correctAnswer
@@ -317,9 +251,7 @@ function validateQuestion(question) {
     question.choices = [];
   }
 
-  if (
-    question.answerType === "number"
-  ) {
+  if (question.answerType === "number") {
     if (
       parseNumber(
         question.correctAnswer
@@ -336,41 +268,59 @@ function validateQuestion(question) {
   return question;
 }
 
+function extractJson(text) {
+  const raw = String(text || "").trim();
 
-/* =========================================================
-   APPEL GEMINI
-   ========================================================= */
+  if (!raw) {
+    throw new Error(
+      "Gemini n'a renvoyé aucune donnée."
+    );
+  }
 
-function isRetryableStatus(status) {
-  return [
-    429,
-    500,
-    502,
-    503,
-    504
-  ].includes(status);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Tentative de récupération si Gemini
+    // a ajouté accidentellement du texte autour du JSON.
+  }
+
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+
+  if (
+    firstBrace !== -1 &&
+    lastBrace !== -1 &&
+    lastBrace > firstBrace
+  ) {
+    const possibleJson = raw.slice(
+      firstBrace,
+      lastBrace + 1
+    );
+
+    try {
+      return JSON.parse(possibleJson);
+    } catch {
+      // On continue vers l'erreur finale.
+    }
+  }
+
+  throw new Error(
+    "La réponse JSON de Gemini est invalide."
+  );
 }
 
-
-function sleep(milliseconds) {
-  return new Promise(resolve => {
-    setTimeout(resolve, milliseconds);
-  });
-}
-
-
-async function callOneGeminiModel({
+async function callGeminiModel(
   apiKey,
   model,
   prompt
-}) {
+) {
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent` +
+    `?key=${encodeURIComponent(apiKey)}`;
 
-  const response =
-    await fetch(url, {
+  const response = await fetch(
+    url,
+    {
       method: "POST",
       headers: {
         "Content-Type":
@@ -395,25 +345,27 @@ async function callOneGeminiModel({
           responseSchema:
             QUESTION_SCHEMA,
 
-          maxOutputTokens: 2000
+          maxOutputTokens: 3000
         }
       })
-    });
+    }
+  );
 
-  const rawText =
+  const responseText =
     await response.text();
 
   if (!response.ok) {
-    const error =
-      new Error(
-        `Gemini ${model} HTTP ${response.status}`
-      );
+    console.error(
+      `Gemini ${model} HTTP ${response.status}:`,
+      responseText
+    );
+
+    const error = new Error(
+      `Gemini ${model} HTTP ${response.status}`
+    );
 
     error.status =
       response.status;
-
-    error.details =
-      rawText.slice(0, 1000);
 
     throw error;
   }
@@ -421,405 +373,91 @@ async function callOneGeminiModel({
   let data;
 
   try {
-    data = JSON.parse(rawText);
+    data = JSON.parse(
+      responseText
+    );
   } catch {
+    console.error(
+      `Réponse non JSON de Gemini ${model}:`,
+      responseText
+    );
+
     throw new Error(
-      `Gemini ${model} a renvoyé une réponse non JSON.`
+      "Gemini a renvoyé une réponse invalide."
     );
   }
 
-  const text =
+  const raw =
     data?.candidates?.[0]
       ?.content?.parts
       ?.map(
-        part => part?.text || ""
+        part =>
+          part?.text || ""
       )
       .join("")
       .trim();
 
-  if (!text) {
+  if (!raw) {
     throw new Error(
-      `Gemini ${model} n'a généré aucun contenu exploitable.`
+      "Gemini n'a pas généré de question."
     );
   }
 
-  let parsed;
-
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    console.error(
-      `JSON invalide retourné par ${model}:`,
-      text
-    );
-
-    throw new Error(
-      `Gemini ${model} a produit un JSON invalide.`
-    );
-  }
+  const question =
+    extractJson(raw);
 
   return validateQuestion(
-    parsed
+    question
   );
 }
 
-
-async function callGeminiWithFallback({
+async function callGeminiWithFallback(
   apiKey,
   prompt
-}) {
+) {
   let lastError = null;
 
-  for (
-    let modelIndex = 0;
-    modelIndex < MODELS.length;
-    modelIndex++
-  ) {
-    const model =
-      MODELS[modelIndex];
+  for (const model of MODELS) {
+    try {
+      console.log(
+        `Tentative quiz avec ${model}`
+      );
 
-    for (
-      let attempt = 1;
-      attempt <= 2;
-      attempt++
-    ) {
-      try {
-        console.log(
-          `Quiz Gemini: ${model}, tentative ${attempt}`
-        );
-
-        return await callOneGeminiModel({
+      const question =
+        await callGeminiModel(
           apiKey,
           model,
           prompt
-        });
-      } catch (error) {
-        lastError = error;
-
-        console.error(
-          `Échec ${model}, tentative ${attempt}:`,
-          error?.message,
-          error?.details || ""
         );
 
-        const retryable =
-          isRetryableStatus(
-            error?.status
-          );
+      console.log(
+        `Quiz généré avec ${model}`
+      );
 
-        if (
-          !retryable &&
-          attempt === 1
-        ) {
-          break;
-        }
+      return question;
+    } catch (error) {
+      lastError = error;
 
-        if (attempt < 2) {
-          await sleep(
-            700 * attempt
-          );
-        }
-      }
+      console.error(
+        `Échec avec ${model}:`,
+        error?.message
+      );
+
+      /*
+       * On essaie automatiquement le modèle
+       * suivant en cas d'indisponibilité.
+       */
+      continue;
     }
   }
 
   throw (
     lastError ||
     new Error(
-      "Les modèles Gemini sont indisponibles."
+      "Tous les modèles Gemini sont indisponibles."
     )
   );
 }
-
-
-/* =========================================================
-   GÉNÉRATION GEMINI
-   ========================================================= */
-
-async function generateQuestionWithGemini({
-  apiKey,
-  grade,
-  subject,
-  serie,
-  topic,
-  difficulty,
-  questionNumber,
-  score,
-  askedQuestions
-}) {
-  const previous =
-    Array.isArray(askedQuestions) &&
-    askedQuestions.length
-      ? askedQuestions
-          .slice(-8)
-          .map(
-            (item, index) =>
-              `${index + 1}. ${item}`
-          )
-          .join("\n")
-      : "Aucune.";
-
-  const isMath =
-    normalizeText(subject)
-      .includes("math");
-
-  const isFraction =
-    normalizeText(topic)
-      .includes("fraction");
-
-  const prompt = `
-Tu es le moteur de quiz de Klasévia.
-
-NIVEAU : ${grade || "Non précisé"}
-MATIÈRE : ${subject || "Non précisée"}
-SÉRIE : ${serie || "Non précisée"}
-THÈME : ${topic || subject || "Non précisé"}
-DIFFICULTÉ : ${difficulty || "normal"}
-NUMÉRO : ${questionNumber}
-SCORE : ${score}
-
-Génère UNE SEULE question.
-
-RÈGLES :
-
-- Français clair adapté à l'élève.
-- Une seule réponse correcte.
-- Aucun énoncé ambigu.
-- Ne répète aucune question précédente.
-- Vérifie réellement la réponse avant de la fournir.
-- L'explication doit être mathématiquement ou pédagogiquement exacte.
-- Ne mets aucune réponse dans l'énoncé.
-- Retourne uniquement l'objet JSON demandé.
-
-TYPES :
-
-1. qcm
-Quatre choix exactement.
-correctAnswer = A, B, C ou D.
-
-2. fraction
-L'élève écrit une fraction.
-Exemple : 3/4.
-Les fractions équivalentes doivent être acceptées.
-
-3. number
-L'élève écrit un nombre.
-
-RÈGLES MATHÉMATIQUES :
-
-- Vérifie tous les calculs.
-- Ne permute jamais numérateur et dénominateur.
-- Si le thème concerne les fractions, privilégie answerType="fraction".
-- N'utilise pas LaTeX.
-- Écris les fractions sous la forme 3/4.
-
-${
-  isMath && isFraction
-    ? `
-Le quiz porte spécifiquement sur les fractions.
-Privilégie donc des questions simples et parfaitement vérifiables
-sur les fractions, adaptées au niveau ${grade}.
-`
-    : ""
-}
-
-QUESTIONS DÉJÀ POSÉES :
-
-${previous}
-`;
-
-  return callGeminiWithFallback({
-    apiKey,
-    prompt
-  });
-}
-
-
-/* =========================================================
-   MOTEUR LOCAL DE SECOURS POUR LES FRACTIONS
-   ========================================================= */
-
-/*
- * Ce moteur est volontairement indépendant de Gemini.
- *
- * Son rôle :
- * si Gemini 3.6 et Gemini 3.5 sont momentanément indisponibles,
- * un quiz de fractions peut quand même continuer.
- */
-
-const LOCAL_FRACTION_QUESTIONS = [
-  {
-    questionId: "local-fraction-1",
-    questionText:
-      "Une tablette de chocolat est divisée en 8 parts égales. Awa mange 3 parts. Quelle fraction de la tablette a-t-elle mangée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "3/8",
-    explanation:
-      "La tablette est divisée en 8 parts égales et Awa en mange 3. La fraction est donc 3/8.",
-    difficulty: "facile"
-  },
-
-  {
-    questionId: "local-fraction-2",
-    questionText:
-      "Un gâteau est partagé en 6 parts égales. Koffi mange 2 parts. Quelle fraction du gâteau reste-t-il ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "4/6",
-    explanation:
-      "Il y a 6 parts au départ et 2 sont mangées. Il reste 6 - 2 = 4 parts, soit 4/6.",
-    difficulty: "facile"
-  },
-
-  {
-    questionId: "local-fraction-3",
-    questionText:
-      "Une orange est divisée en 10 parts égales. Awa mange 4 parts. Quelle fraction de l'orange a-t-elle mangée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "4/10",
-    explanation:
-      "L'orange possède 10 parts égales et 4 sont mangées. La fraction est donc 4/10, soit 2/5 après simplification.",
-    difficulty: "facile"
-  },
-
-  {
-    questionId: "local-fraction-4",
-    questionText:
-      "Un pain est partagé en 12 morceaux égaux. Kouassi en donne 5 à son frère. Quelle fraction du pain a-t-il donnée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "5/12",
-    explanation:
-      "Le pain comporte 12 morceaux égaux et 5 sont donnés. La fraction donnée est donc 5/12.",
-    difficulty: "facile"
-  },
-
-  {
-    questionId: "local-fraction-5",
-    questionText:
-      "Un pain est partagé en 5 parts égales. Abou en donne 3 à sa petite sœur. Quelle fraction du pain a-t-il gardée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "2/5",
-    explanation:
-      "Le pain compte 5 parts. Abou en donne 3, donc il lui reste 5 - 3 = 2 parts. Il garde donc 2/5.",
-    difficulty: "facile"
-  },
-
-  {
-    questionId: "local-fraction-6",
-    questionText:
-      "Une bouteille contient 8 portions égales. Mariam en utilise 6. Quelle fraction de la bouteille reste-t-il ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "2/8",
-    explanation:
-      "Il reste 8 - 6 = 2 portions sur les 8 initiales. La fraction restante est donc 2/8, soit 1/4 après simplification.",
-    difficulty: "normal"
-  },
-
-  {
-    questionId: "local-fraction-7",
-    questionText:
-      "Une classe compte 20 élèves. 5 élèves portent un tee-shirt blanc. Quelle fraction de la classe portent un tee-shirt blanc ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "5/20",
-    explanation:
-      "5 élèves sur 20 portent un tee-shirt blanc. La fraction est donc 5/20, soit 1/4 après simplification.",
-    difficulty: "normal"
-  },
-
-  {
-    questionId: "local-fraction-8",
-    questionText:
-      "Un terrain est partagé en 9 parcelles égales. 7 parcelles sont utilisées. Quelle fraction du terrain n'est pas utilisée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "2/9",
-    explanation:
-      "Sur 9 parcelles, 7 sont utilisées. Il en reste 9 - 7 = 2. La fraction non utilisée est donc 2/9.",
-    difficulty: "normal"
-  },
-
-  {
-    questionId: "local-fraction-9",
-    questionText:
-      "Une mangue est découpée en 12 morceaux égaux. Yao mange 8 morceaux. Quelle fraction de la mangue a-t-il mangée ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "8/12",
-    explanation:
-      "Yao mange 8 morceaux sur 12. La fraction est donc 8/12, soit 2/3 après simplification.",
-    difficulty: "normal"
-  },
-
-  {
-    questionId: "local-fraction-10",
-    questionText:
-      "Un sac contient 15 billes identiques. 6 billes sont rouges. Quelle fraction des billes sont rouges ?",
-    answerType: "fraction",
-    choices: [],
-    correctAnswer: "6/15",
-    explanation:
-      "Il y a 6 billes rouges sur 15. La fraction est donc 6/15, soit 2/5 après simplification.",
-    difficulty: "normal"
-  }
-];
-
-
-function getLocalFractionQuestion(
-  askedQuestions
-) {
-  const used =
-    Array.isArray(askedQuestions)
-      ? askedQuestions
-      : [];
-
-  const available =
-    LOCAL_FRACTION_QUESTIONS.filter(
-      question =>
-        !used.includes(
-          question.questionText
-        )
-    );
-
-  if (available.length > 0) {
-    return available[0];
-  }
-
-  return (
-    LOCAL_FRACTION_QUESTIONS[
-      Math.floor(
-        Math.random() *
-          LOCAL_FRACTION_QUESTIONS.length
-      )
-    ]
-  );
-}
-
-
-/* =========================================================
-   CHOIX DU MOTEUR DE QUESTION
-   ========================================================= */
-
-function shouldUseLocalFractionFallback({
-  subject,
-  topic
-}) {
-  const math =
-    normalizeText(subject)
-      .includes("math");
-
-  const fraction =
-    normalizeText(topic)
-      .includes("fraction");
-
-  return math && fraction;
-}
-
 
 async function generateQuestion({
   apiKey,
@@ -832,47 +470,165 @@ async function generateQuestion({
   score,
   askedQuestions
 }) {
-  try {
-    return await generateQuestionWithGemini({
-      apiKey,
-      grade,
-      subject,
-      serie,
-      topic,
-      difficulty,
-      questionNumber,
-      score,
+  const previousQuestions =
+    Array.isArray(
       askedQuestions
-    });
-  } catch (error) {
-    console.error(
-      "Gemini indisponible pour le quiz :",
-      error?.message
+    ) &&
+    askedQuestions.length > 0
+      ? askedQuestions
+          .slice(-10)
+          .map(
+            (question, index) =>
+              `${index + 1}. ${question}`
+          )
+          .join("\n")
+      : "Aucune question précédente.";
+
+  const normalizedSubject =
+    normalizeText(subject);
+
+  const normalizedTopic =
+    normalizeText(topic);
+
+  const isMath =
+    normalizedSubject.includes(
+      "math"
     );
 
-    if (
-      shouldUseLocalFractionFallback({
-        subject,
-        topic
-      })
-    ) {
-      console.log(
-        "Utilisation du moteur local de secours pour les fractions."
-      );
+  const isFraction =
+    normalizedTopic.includes(
+      "fraction"
+    );
 
-      return getLocalFractionQuestion(
-        askedQuestions
-      );
-    }
+  const prompt = `
+Tu es le moteur officiel de génération des quiz de Klasévia.
 
-    throw error;
-  }
+Tu dois générer UNE SEULE question.
+
+INFORMATIONS DE L'ÉLÈVE
+
+Niveau scolaire :
+${grade}
+
+Matière :
+${subject}
+
+Série :
+${serie || "Non précisée"}
+
+Thème :
+${topic || subject}
+
+Difficulté :
+${difficulty || "normal"}
+
+Numéro de question :
+${questionNumber}
+
+Score actuel :
+${score}
+
+RÈGLES PÉDAGOGIQUES
+
+1. La question doit être adaptée au niveau indiqué.
+2. La question doit correspondre exactement au thème.
+3. Ne répète aucune question déjà posée.
+4. La réponse doit être parfaitement déterminée.
+5. La question ne doit être ni ambiguë ni trompeuse.
+6. Vérifie le calcul avant de donner correctAnswer.
+7. L'explication doit être correcte.
+8. Ne mets pas la réponse directement dans questionText.
+9. Ne mets aucun Markdown dans les champs JSON.
+10. Retourne exactement un objet JSON conforme au schéma.
+
+TYPES AUTORISÉS
+
+QCM :
+- answerType = "qcm"
+- exactement quatre choix
+- choices = [A, B, C, D]
+- correctAnswer = "A", "B", "C" ou "D"
+
+FRACTION :
+- answerType = "fraction"
+- choices = []
+- correctAnswer sous forme a/b
+- les fractions équivalentes seront acceptées par le moteur
+
+NOMBRE :
+- answerType = "number"
+- choices = []
+- correctAnswer doit être un nombre exact
+
+RÈGLES SPÉCIALES POUR LES FRACTIONS
+
+${
+  isMath && isFraction
+    ? `
+Le quiz porte sur les fractions.
+
+Privilégie les questions de niveau 5e portant sur :
+- représentation d'une fraction ;
+- partie d'un tout ;
+- fractions équivalentes ;
+- simplification ;
+- comparaison simple ;
+- addition ou soustraction simple de fractions lorsque le niveau le permet.
+
+Si la question demande une fraction, utilise answerType = "fraction".
+
+Exemple :
+
+Une pastèque est divisée en 8 parts égales.
+Koffi en donne 5.
+Quelle fraction de la pastèque lui reste-t-il ?
+
+La réponse correcte est :
+
+3/8
+
+Vérifie toujours le calcul avant de produire correctAnswer.
+`
+    : ""
 }
 
+RÈGLES POUR LES MATHÉMATIQUES
 
-/* =========================================================
-   AFFICHAGE
-   ========================================================= */
+${
+  isMath
+    ? `
+- Effectue réellement le calcul.
+- Vérifie le résultat une deuxième fois.
+- Ne permute jamais numérateur et dénominateur.
+- Ne transforme jamais 3/5 en 5/3.
+- Si plusieurs écritures sont équivalentes, donne comme correctAnswer une forme mathématiquement correcte.
+`
+    : ""
+}
+
+CONTEXTE IVOIRIEN
+
+Lorsque cela est naturel, utilise des situations proches de la vie quotidienne en Côte d'Ivoire :
+marché, école, famille, repas, fruits, argent en FCFA, quartiers ou villes.
+
+Ne force cependant pas le contexte ivoirien lorsque cela rend la question artificielle.
+
+QUESTIONS DÉJÀ POSÉES
+
+${previousQuestions}
+
+IMPORTANT
+
+Retourne UNIQUEMENT le JSON.
+Aucun texte avant le JSON.
+Aucun texte après le JSON.
+`;
+
+  return callGeminiWithFallback(
+    apiKey,
+    prompt
+  );
+}
 
 function formatFraction(value) {
   const fraction =
@@ -885,7 +641,6 @@ function formatFraction(value) {
   return `${fraction.numerator}/${fraction.denominator}`;
 }
 
-
 function formatQuestion(
   question,
   questionNumber
@@ -897,7 +652,8 @@ function formatQuestion(
     `${question.questionText}\n\n`;
 
   if (
-    question.answerType === "qcm"
+    question.answerType ===
+    "qcm"
   ) {
     question.choices.forEach(
       (choice, index) => {
@@ -916,14 +672,16 @@ function formatQuestion(
   }
 
   if (
-    question.answerType === "fraction"
+    question.answerType ===
+    "fraction"
   ) {
     output +=
       "\n✍️ Écris ta réponse sous forme de fraction, par exemple 3/4.";
   }
 
   if (
-    question.answerType === "number"
+    question.answerType ===
+    "number"
   ) {
     output +=
       "\n✍️ Écris simplement le nombre demandé.";
@@ -931,79 +689,6 @@ function formatQuestion(
 
   return output;
 }
-
-
-function getDisplayedCorrectAnswer(
-  question
-) {
-  if (
-    question.answerType === "qcm"
-  ) {
-    const index =
-      "ABCD".indexOf(
-        question.correctAnswer
-      );
-
-    if (
-      index >= 0 &&
-      question.choices?.[index]
-    ) {
-      return `${question.correctAnswer}. ${question.choices[index]}`;
-    }
-
-    return question.correctAnswer;
-  }
-
-  if (
-    question.answerType === "fraction"
-  ) {
-    return formatFraction(
-      question.correctAnswer
-    );
-  }
-
-  return question.correctAnswer;
-}
-
-
-function formatCorrection({
-  question,
-  studentAnswer,
-  isCorrect,
-  scoreAfter,
-  questionNumber
-}) {
-  let output = "";
-
-  if (isCorrect) {
-    output =
-      "### ✅ Bonne réponse !\n\n";
-  } else {
-    output =
-      "### ❌ Ce n'est pas la bonne réponse.\n\n";
-  }
-
-  output +=
-    `**Ta réponse :** ${studentAnswer}\n\n`;
-
-  output +=
-    `**Bonne réponse :** ${getDisplayedCorrectAnswer(
-      question
-    )}\n\n`;
-
-  output +=
-    `${question.explanation}\n\n`;
-
-  output +=
-    `**Score actuel : ${scoreAfter}/${questionNumber}**`;
-
-  return output;
-}
-
-
-/* =========================================================
-   CORRECTION DÉTERMINISTE
-   ========================================================= */
 
 function gradeAnswer(
   question,
@@ -1018,16 +703,20 @@ function gradeAnswer(
   }
 
   if (
-    question.answerType === "qcm"
+    question.answerType ===
+    "qcm"
   ) {
     return (
       normalizeChoice(answer) ===
-      question.correctAnswer
+      normalizeChoice(
+        question.correctAnswer
+      )
     );
   }
 
   if (
-    question.answerType === "fraction"
+    question.answerType ===
+    "fraction"
   ) {
     return fractionsEqual(
       answer,
@@ -1036,7 +725,8 @@ function gradeAnswer(
   }
 
   if (
-    question.answerType === "number"
+    question.answerType ===
+    "number"
   ) {
     return numbersEqual(
       answer,
@@ -1044,37 +734,82 @@ function gradeAnswer(
     );
   }
 
-  return (
-    normalizeText(answer) ===
-    normalizeText(
-      question.correctAnswer
-    )
-  );
+  return false;
 }
 
+function makeQuizState({
+  topic,
+  question,
+  questionNumber,
+  score,
+  askedQuestions,
+  difficulty
+}) {
+  return {
+    active: true,
 
-/* =========================================================
-   DIFFICULTÉ ADAPTATIVE
-   ========================================================= */
+    topic:
+      topic ||
+      "Quiz scolaire",
 
-function getNextDifficulty({
+    totalQuestions:
+      TOTAL_QUESTIONS,
+
+    questionNumber,
+
+    score,
+
+    difficulty:
+      difficulty ||
+      "normal",
+
+    askedQuestions,
+
+    currentQuestion: {
+      questionId:
+        question.questionId,
+
+      questionText:
+        question.questionText,
+
+      answerType:
+        question.answerType,
+
+      choices:
+        question.choices,
+
+      correctAnswer:
+        question.correctAnswer,
+
+      explanation:
+        question.explanation,
+
+      difficulty:
+        question.difficulty,
+
+      questionNumber
+    }
+  };
+}
+
+function getNextDifficulty(
   currentDifficulty,
   isCorrect,
   score,
-  answeredQuestions
-}) {
+  questionNumber
+) {
   const current =
     currentDifficulty ||
     "normal";
 
   const ratio =
-    answeredQuestions > 0
-      ? score / answeredQuestions
+    questionNumber > 0
+      ? score / questionNumber
       : 0;
 
   if (
     isCorrect &&
-    ratio >= 0.8
+    ratio >= 0.7
   ) {
     if (
       current === "facile"
@@ -1109,11 +844,6 @@ function getNextDifficulty({
   return current;
 }
 
-
-/* =========================================================
-   EXTRACTION DU THÈME
-   ========================================================= */
-
 function extractTopic(message) {
   const text =
     String(message || "")
@@ -1130,219 +860,154 @@ function extractTopic(message) {
       .trim();
   }
 
-  const cleaned =
-    text
-      .replace(
-        /fais-moi/gi,
-        ""
-      )
-      .replace(
-        /fais moi/gi,
-        ""
-      )
-      .replace(
-        /donne-moi/gi,
-        ""
-      )
-      .replace(
-        /donne moi/gi,
-        ""
-      )
-      .replace(
-        /un quiz/gi,
-        ""
-      )
-      .replace(
-        /un qcm/gi,
-        ""
-      )
-      .replace(
-        /quiz/gi,
-        ""
-      )
-      .replace(
-        /qcm/gi,
-        ""
-      )
-      .trim();
-
-  return cleaned;
-}
-
-
-/* =========================================================
-   ÉTAT DU QUIZ
-   ========================================================= */
-
-function createQuizState({
-  topic,
-  question,
-  questionNumber,
-  score,
-  askedQuestions,
-  difficulty
-}) {
-  return {
-    active: true,
-
-    total: TOTAL_QUESTIONS,
-
-    totalQuestions:
-      TOTAL_QUESTIONS,
-
-    questionNumber,
-
-    score,
-
-    topic:
-      topic || "Quiz scolaire",
-
-    difficulty:
-      difficulty || "normal",
-
-    askedQuestions:
-      Array.isArray(
-        askedQuestions
-      )
-        ? askedQuestions
-        : [],
-
-    currentQuestion: {
-      questionId:
-        question.questionId,
-
-      questionText:
-        question.questionText,
-
-      answerType:
-        question.answerType,
-
-      choices:
-        question.choices || [],
-
-      correctAnswer:
-        question.correctAnswer,
-
-      explanation:
-        question.explanation,
-
-      difficulty:
-        question.difficulty,
-
-      questionNumber
-    }
-  };
-}
-
-
-/* =========================================================
-   RÉPONSE JSON SÉCURISÉE
-   ========================================================= */
-
-function sendJson(
-  res,
-  status,
-  payload
-) {
-  res
-    .status(status)
-    .setHeader(
-      "Content-Type",
-      "application/json; charset=utf-8"
+  return text
+    .replace(
+      /fais-moi|fais moi|donne-moi|donne moi|un quiz|un qcm|quiz|qcm/gi,
+      ""
     )
-    .json(payload);
+    .trim();
 }
 
+function isQuizStartMessage(
+  message
+) {
+  const text =
+    normalizeText(message);
 
-/* =========================================================
-   HANDLER PRINCIPAL
-   ========================================================= */
+  return (
+    text.includes("quiz") ||
+    text.includes("qcm") ||
+    text.includes(
+      "teste-moi"
+    ) ||
+    text.includes(
+      "teste moi"
+    ) ||
+    text.includes(
+      "nouveau quiz"
+    ) ||
+    text.includes(
+      "recommence le quiz"
+    ) ||
+    text.includes(
+      "recommencer le quiz"
+    )
+  );
+}
+
+function formatCorrection(
+  question,
+  studentAnswer,
+  isCorrect,
+  scoreAfter,
+  questionNumber
+) {
+  let output =
+    isCorrect
+      ? "### ✅ Bonne réponse !\n\n"
+      : "### ❌ Ce n'est pas la bonne réponse.\n\n";
+
+  output +=
+    `**Ta réponse :** ${studentAnswer}\n\n`;
+
+  if (
+    question.answerType ===
+    "qcm"
+  ) {
+    const index =
+      ["A", "B", "C", "D"].indexOf(
+        question.correctAnswer
+      );
+
+    const correctText =
+      index >= 0
+        ? question.choices[index]
+        : "";
+
+    output +=
+      `**Bonne réponse :** ${question.correctAnswer}. ${correctText}\n\n`;
+  }
+
+  if (
+    question.answerType ===
+    "fraction"
+  ) {
+    output +=
+      `**Bonne réponse :** ${formatFraction(
+        question.correctAnswer
+      )}\n\n`;
+  }
+
+  if (
+    question.answerType ===
+    "number"
+  ) {
+    output +=
+      `**Bonne réponse :** ${question.correctAnswer}\n\n`;
+  }
+
+  output +=
+    `${question.explanation}\n\n`;
+
+  output +=
+    `**Score actuel : ${scoreAfter}/${questionNumber}**`;
+
+  return output;
+}
 
 export default async function handler(
   req,
   res
 ) {
   if (req.method !== "POST") {
-    return sendJson(
-      res,
-      405,
-      {
-        error:
-          "Méthode non autorisée."
-      }
-    );
+    return res.status(405).json({
+      error:
+        "Méthode non autorisée."
+    });
   }
 
   try {
-    const body =
-      req.body || {};
-
-    const action =
-      body.action || "";
-
-    const message =
-      String(
-        body.message || ""
-      ).trim();
-
-    const grade =
-      body.grade || "";
-
-    const subject =
-      body.subject || "";
-
-    const serie =
-      body.serie || "";
-
-    const difficulty =
-      body.difficulty || "";
-
-    const quizState =
-      body.quizState || null;
+    const {
+      action = "",
+      message = "",
+      grade = "",
+      subject = "",
+      serie = "",
+      difficulty = "",
+      quizState = null
+    } = req.body || {};
 
     const apiKey =
       process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return sendJson(
-        res,
-        500,
-        {
-          error:
-            "La clé GEMINI_API_KEY n'est pas configurée sur Vercel."
-        }
-      );
+      return res.status(500).json({
+        error:
+          "La clé API Gemini n'est pas configurée sur Vercel."
+      });
     }
 
-
-    /* =====================================================
-       DÉMARRAGE
-       ===================================================== */
+    /*
+     * ==========================================
+     * DÉMARRAGE DU QUIZ
+     * ==========================================
+     */
 
     if (
-      action === "start"
+      action === "start" ||
+      isQuizStartMessage(message)
     ) {
       const topic =
         extractTopic(message) ||
-        subject ||
-        "Quiz scolaire";
+        subject;
 
-      let initialDifficulty =
-        "normal";
-
-      if (
+      const initialDifficulty =
         difficulty === "simple"
-      ) {
-        initialDifficulty =
-          "facile";
-      }
-
-      if (
-        difficulty === "détaillé"
-      ) {
-        initialDifficulty =
-          "normal";
-      }
+          ? "facile"
+          : difficulty ===
+            "détaillé"
+          ? "normal"
+          : "normal";
 
       const question =
         await generateQuestion({
@@ -1358,8 +1023,8 @@ export default async function handler(
           askedQuestions: []
         });
 
-      const state =
-        createQuizState({
+      const quiz =
+        makeQuizState({
           topic,
           question,
           questionNumber: 1,
@@ -1371,52 +1036,36 @@ export default async function handler(
             initialDifficulty
         });
 
-      return sendJson(
-        res,
-        200,
-        {
-          answer:
-            `🎯 **Quiz Klasévia — ${topic}**\n\n` +
-            formatQuestion(
-              question,
-              1
-            ),
+      return res.status(200).json({
+        answer:
+          `🎯 **Quiz Klasévia — ${topic}**\n\n` +
+          formatQuestion(
+            question,
+            1
+          ),
 
-          quizState: state
-        }
-      );
+        quizState: quiz
+      });
     }
 
-
-    /* =====================================================
-       RÉPONSE
-       ===================================================== */
+    /*
+     * ==========================================
+     * RÉPONSE À UNE QUESTION
+     * ==========================================
+     */
 
     if (
-      action === "answer"
+      action === "answer" &&
+      quizState?.active &&
+      quizState?.currentQuestion
     ) {
-      if (
-        !quizState ||
-        !quizState.active ||
-        !quizState.currentQuestion
-      ) {
-        return sendJson(
-          res,
-          400,
-          {
-            error:
-              "Aucun quiz actif. Demande un nouveau quiz pour commencer."
-          }
-        );
-      }
-
-      const question =
+      const currentQuestion =
         quizState.currentQuestion;
 
-      const questionNumber =
-        Number(
-          quizState.questionNumber ||
-            1
+      const isCorrect =
+        gradeAnswer(
+          currentQuestion,
+          message
         );
 
       const previousScore =
@@ -1424,23 +1073,24 @@ export default async function handler(
           quizState.score || 0
         );
 
-      const isCorrect =
-        gradeAnswer(
-          question,
-          message
+      const currentNumber =
+        Number(
+          quizState.questionNumber ||
+            1
         );
 
       const newScore =
         previousScore +
         (isCorrect ? 1 : 0);
 
-
-      /* =================================================
-         FIN DU QUIZ
-         ================================================= */
+      /*
+       * ========================================
+       * FIN DU QUIZ
+       * ========================================
+       */
 
       if (
-        questionNumber >=
+        currentNumber >=
         TOTAL_QUESTIONS
       ) {
         const percentage =
@@ -1450,60 +1100,156 @@ export default async function handler(
               100
           );
 
-        let encouragement =
-          "";
+        const finalQuiz = {
+          ...quizState,
+          active: false,
+          score: newScore,
+          questionNumber:
+            currentNumber,
+          currentQuestion: null,
+          finalScore: newScore,
+          completedAt:
+            new Date().toISOString()
+        };
 
-        if (
-          percentage >= 80
-        ) {
-          encouragement =
+        let appreciation;
+
+        if (percentage >= 80) {
+          appreciation =
             "Excellent travail ! Tu maîtrises très bien cette notion. 🎉";
         } else if (
           percentage >= 60
         ) {
-          encouragement =
+          appreciation =
             "Bon travail ! Quelques révisions supplémentaires te permettront encore de progresser.";
         } else {
-          encouragement =
-            "Ce n'est pas grave. Nous allons reprendre les notions difficiles étape par étape.";
+          appreciation =
+            "Ce n'est pas grave. Nous allons reprendre les notions qui posent difficulté et progresser étape par étape.";
         }
 
-        const finalMessage =
-          formatCorrection({
-            question,
-            studentAnswer:
-              message,
+        const finalAnswer =
+          formatCorrection(
+            currentQuestion,
+            message,
             isCorrect,
-            scoreAfter:
-              newScore,
-            questionNumber
-          }) +
-          "\n\n---\n\n" +
-          "## 🏁 Quiz terminé !\n\n" +
+            newScore,
+            currentNumber
+          ) +
+          `\n\n## 🏁 Quiz terminé !\n\n` +
           `**Résultat : ${newScore}/${TOTAL_QUESTIONS} (${percentage} %).**\n\n` +
-          encouragement;
+          appreciation;
 
-        const finalState = {
-          ...quizState,
+        return res.status(200).json({
+          answer:
+            finalAnswer,
 
-          active: false,
+          quizState:
+            finalQuiz
+        });
+      }
 
-          total:
-            TOTAL_QUESTIONS,
+      /*
+       * ========================================
+       * GÉNÉRATION DE LA QUESTION SUIVANTE
+       * ========================================
+       */
 
-          totalQuestions:
-            TOTAL_QUESTIONS,
+      const nextDifficulty =
+        getNextDifficulty(
+          quizState.difficulty,
+          isCorrect,
+          newScore,
+          currentNumber
+        );
 
-          questionNumber,
+      const askedQuestions =
+        Array.isArray(
+          quizState.askedQuestions
+        )
+          ? quizState.askedQuestions
+          : [];
+
+      const nextQuestion =
+        await generateQuestion({
+          apiKey,
+          grade,
+          subject,
+          serie,
+          topic:
+            quizState.topic ||
+            subject,
+          difficulty:
+            nextDifficulty,
+          questionNumber:
+            currentNumber + 1,
+          score: newScore,
+          askedQuestions
+        });
+
+      const nextState =
+        makeQuizState({
+          topic:
+            quizState.topic ||
+            subject,
+
+          question:
+            nextQuestion,
+
+          questionNumber:
+            currentNumber + 1,
 
           score:
             newScore,
 
-          currentQuestion:
-            null,
+          askedQuestions: [
+            ...askedQuestions,
+            nextQuestion.questionText
+          ].slice(-10),
 
-          finalScore:
-            newScore,
+          difficulty:
+            nextDifficulty
+        });
 
-          completedAt:
-            new Date().toISOString
+      const correction =
+        formatCorrection(
+          currentQuestion,
+          message,
+          isCorrect,
+          newScore,
+          currentNumber
+        );
+
+      const nextQuestionText =
+        `\n\n---\n\n` +
+        formatQuestion(
+          nextQuestion,
+          currentNumber + 1
+        );
+
+      return res.status(200).json({
+        answer:
+          correction +
+          nextQuestionText,
+
+        quizState:
+          nextState
+      });
+    }
+
+    return res.status(400).json({
+      error:
+        "État du quiz invalide. Demande un nouveau quiz pour recommencer."
+    });
+  } catch (error) {
+    console.error(
+      "Erreur API Quiz :",
+      error
+    );
+
+    return res.status(500).json({
+      error:
+        error?.message ||
+        "Une erreur interne est survenue dans le moteur du quiz."
+    });
+  }
+}
