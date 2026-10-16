@@ -1,4 +1,9 @@
-const MODEL = "gemini-3.8-flash";
+const MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite"
+];
+
 const TOTAL_QUESTIONS = 10;
 
 function gcd(a, b) {
@@ -19,7 +24,9 @@ function parseFraction(value) {
     .trim()
     .replace(/\s+/g, "");
 
-  const match = text.match(/^([+-]?\d+)\/([+-]?\d+)$/);
+  const match = text.match(
+    /^([+-]?\d+)\/([+-]?\d+)$/
+  );
 
   if (!match) {
     return null;
@@ -41,7 +48,10 @@ function parseFraction(value) {
     denominator = -denominator;
   }
 
-  const divisor = gcd(numerator, denominator);
+  const divisor = gcd(
+    numerator,
+    denominator
+  );
 
   return {
     numerator: numerator / divisor,
@@ -68,7 +78,9 @@ function normalizeChoice(value) {
     .trim()
     .toUpperCase();
 
-  const match = text.match(/^([ABCD])(?:[\s.)].*)?$/);
+  const match = text.match(
+    /^([ABCD])(?:[\s.)].*)?$/
+  );
 
   return match ? match[1] : null;
 }
@@ -85,7 +97,9 @@ function parseNumber(value) {
 
   const number = Number(text);
 
-  return Number.isFinite(number) ? number : null;
+  return Number.isFinite(number)
+    ? number
+    : null;
 }
 
 function numbersEqual(first, second) {
@@ -97,13 +111,16 @@ function numbersEqual(first, second) {
   }
 
   const tolerance =
-    1e-9 * Math.max(
+    1e-9 *
+    Math.max(
       1,
       Math.abs(a),
       Math.abs(b)
     );
 
-  return Math.abs(a - b) <= tolerance;
+  return (
+    Math.abs(a - b) <= tolerance
+  );
 }
 
 function gradeAnswer(question, userAnswer) {
@@ -111,21 +128,29 @@ function gradeAnswer(question, userAnswer) {
     return false;
   }
 
-  if (question.answerType === "qcm") {
+  if (
+    question.answerType === "qcm"
+  ) {
     return (
       normalizeChoice(userAnswer) ===
-      normalizeChoice(question.correctAnswer)
+      normalizeChoice(
+        question.correctAnswer
+      )
     );
   }
 
-  if (question.answerType === "fraction") {
+  if (
+    question.answerType === "fraction"
+  ) {
     return fractionsEqual(
       userAnswer,
       question.correctAnswer
     );
   }
 
-  if (question.answerType === "number") {
+  if (
+    question.answerType === "number"
+  ) {
     return numbersEqual(
       userAnswer,
       question.correctAnswer
@@ -386,13 +411,22 @@ function extractJson(text) {
     return null;
   }
 
-  let cleaned = String(text)
-    .trim();
+  let cleaned =
+    String(text).trim();
 
   cleaned = cleaned
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
+    .replace(
+      /^```json\s*/i,
+      ""
+    )
+    .replace(
+      /^```\s*/i,
+      ""
+    )
+    .replace(
+      /\s*```$/i,
+      ""
+    )
     .trim();
 
   try {
@@ -428,6 +462,90 @@ function extractJson(text) {
   }
 }
 
+function isTemporaryModelError(
+  status,
+  message
+) {
+  const text =
+    String(message || "")
+      .toLowerCase();
+
+  return (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    text.includes(
+      "high demand"
+    ) ||
+    text.includes(
+      "temporarily unavailable"
+    ) ||
+    text.includes(
+      "resource exhausted"
+    ) ||
+    text.includes(
+      "overloaded"
+    ) ||
+    text.includes(
+      "unavailable"
+    )
+  );
+}
+
+async function callGemini({
+  apiKey,
+  model,
+  body
+}) {
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const response =
+    await fetch(url, {
+      method: "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json",
+
+        "x-goog-api-key":
+          apiKey
+      },
+
+      body:
+        JSON.stringify(body)
+    });
+
+  const data =
+    await response.json();
+
+  if (!response.ok) {
+    const errorMessage =
+      data?.error?.message ||
+      `Gemini a retourné une erreur HTTP ${response.status}.`;
+
+    const error =
+      new Error(
+        errorMessage
+      );
+
+    error.status =
+      response.status;
+
+    error.temporary =
+      isTemporaryModelError(
+        response.status,
+        errorMessage
+      );
+
+    throw error;
+  }
+
+  return data;
+}
+
 async function generateQuestion({
   apiKey,
   grade,
@@ -437,11 +555,6 @@ async function generateQuestion({
   difficulty,
   askedQuestions
 }) {
-  const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/" +
-    MODEL +
-    ":generateContent";
-
   const previousQuestions =
     Array.isArray(
       askedQuestions
@@ -523,7 +636,9 @@ Il ne faut surtout pas répondre 5/3.
 
 FORMAT OBLIGATOIRE :
 
-Tu dois répondre UNIQUEMENT avec un objet JSON valide ayant exactement cette structure :
+Réponds UNIQUEMENT avec un objet JSON valide.
+
+Structure :
 
 {
   "questionId": "identifiant unique",
@@ -587,83 +702,95 @@ Ne mets aucun texte avant ou après le JSON.
   };
 
   let lastError =
-    "La génération de la question a échoué.";
+    null;
 
   for (
-    let attempt = 0;
-    attempt < 2;
-    attempt += 1
+    let modelIndex = 0;
+    modelIndex <
+      MODELS.length;
+    modelIndex += 1
   ) {
-    try {
-      const response =
-        await fetch(url, {
-          method: "POST",
+    const model =
+      MODELS[modelIndex];
 
-          headers: {
-            "Content-Type":
-              "application/json",
+    for (
+      let attempt = 0;
+      attempt < 2;
+      attempt += 1
+    ) {
+      try {
+        const data =
+          await callGemini({
+            apiKey,
+            model,
+            body
+          });
 
-            "x-goog-api-key":
-              apiKey
-          },
+        const text =
+          extractText(data);
 
-          body:
-            JSON.stringify(body)
-        });
+        if (!text) {
+          lastError =
+            new Error(
+              `Le modèle ${model} n'a fourni aucun contenu.`
+            );
 
-      const data =
-        await response.json();
+          continue;
+        }
 
-      if (!response.ok) {
+        const parsed =
+          extractJson(text);
+
+        if (!parsed) {
+          lastError =
+            new Error(
+              `Le modèle ${model} a fourni un JSON invalide.`
+            );
+
+          continue;
+        }
+
+        const validation =
+          validateQuestion(
+            parsed
+          );
+
+        if (
+          !validation.valid
+        ) {
+          lastError =
+            new Error(
+              `La question générée par ${model} n'a pas le format attendu.`
+            );
+
+          continue;
+        }
+
+        return validation.question;
+      } catch (error) {
         lastError =
-          data?.error?.message ||
-          `Gemini a retourné une erreur HTTP ${response.status}.`;
+          error;
 
-        continue;
+        if (
+          error?.temporary
+        ) {
+          break;
+        }
+
+        if (
+          attempt === 1
+        ) {
+          break;
+        }
       }
-
-      const text =
-        extractText(data);
-
-      if (!text) {
-        lastError =
-          "Gemini n'a fourni aucun texte pour la question.";
-
-        continue;
-      }
-
-      const parsed =
-        extractJson(text);
-
-      if (!parsed) {
-        lastError =
-          "Gemini a fourni une réponse qui n'est pas un JSON valide.";
-
-        continue;
-      }
-
-      const validation =
-        validateQuestion(
-          parsed
-        );
-
-      if (!validation.valid) {
-        lastError =
-          "La question générée n'a pas le format attendu.";
-
-        continue;
-      }
-
-      return validation.question;
-    } catch (error) {
-      lastError =
-        error?.message ||
-        "Erreur réseau pendant la génération du quiz.";
     }
   }
 
-  throw new Error(
-    lastError
+  throw (
+    lastError ||
+    new Error(
+      "Aucun modèle Gemini disponible actuellement."
+    )
   );
 }
 
@@ -817,7 +944,9 @@ function sanitizeQuizState(
       state.currentQuestion
     );
 
-  if (!validation.valid) {
+  if (
+    !validation.valid
+  ) {
     return null;
   }
 
@@ -1148,6 +1277,7 @@ export default async function handler(
     return res.status(405).json({
       message:
         "Méthode non autorisée.",
+
       error:
         "Méthode non autorisée."
     });
@@ -1161,6 +1291,7 @@ export default async function handler(
       return res.status(500).json({
         message:
           "La clé GEMINI_API_KEY est absente de la configuration Vercel.",
+
         error:
           "GEMINI_API_KEY missing"
       });
@@ -1197,6 +1328,7 @@ export default async function handler(
       return res.status(400).json({
         message:
           "Action de quiz invalide.",
+
         error:
           "L'action doit être start ou answer."
       });
@@ -1214,15 +1346,6 @@ export default async function handler(
           subject,
           difficulty
         });
-
-      if (
-        !result ||
-        !result.message
-      ) {
-        throw new Error(
-          "Le moteur de quiz n'a généré aucune réponse."
-        );
-      }
 
       return res.status(200).json({
         message:
@@ -1243,15 +1366,6 @@ export default async function handler(
         difficulty,
         quizState
       });
-
-    if (
-      !result ||
-      !result.message
-    ) {
-      throw new Error(
-        "Le moteur de quiz n'a généré aucune réponse."
-      );
-    }
 
     return res.status(200).json({
       message:
