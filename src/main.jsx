@@ -54,24 +54,6 @@ function makeId() {
  * ============================================================
  * QUIZ
  * ============================================================
- *
- * Le quiz possède maintenant son propre état.
- *
- * Le frontend ne demande plus à l'IA :
- * "Est-ce que le dernier message était une réponse ?"
- *
- * Il sait directement :
- * - quizState.active === false -> pas de quiz en cours
- * - quizState.active === true  -> le prochain message est une réponse
- *
- * Cela évite notamment les problèmes avec :
- * 2/4
- * 6/10
- * 3/5
- * A
- * B
- * C
- * D
  */
 
 function isQuizStartRequest(value) {
@@ -152,13 +134,7 @@ function makeConversation(settings = {}) {
       settings.difficulty || "détaillé",
     mode:
       settings.mode || "explication",
-
-    /*
-     * Nouveau :
-     * l'état du quiz appartient à la conversation.
-     */
     quizState: null,
-
     messages: []
   };
 }
@@ -176,7 +152,6 @@ function normalizeConversation(conversation) {
 
   return {
     ...conversation,
-
     grade,
 
     serie: normalizeSerie(
@@ -196,12 +171,6 @@ function normalizeConversation(conversation) {
       conversation.mode ||
       "explication",
 
-    /*
-     * Les anciennes conversations n'ont pas
-     * forcément quizState.
-     *
-     * On leur attribue donc null.
-     */
     quizState:
       conversation.quizState || null,
 
@@ -272,8 +241,8 @@ function loadSavedData() {
       };
     }
   } catch (_) {
-    // Si l'historique est illisible,
-    // on démarre une conversation propre.
+    // Historique illisible :
+    // on repart sur une conversation propre.
   }
 
   const first =
@@ -551,6 +520,15 @@ function App() {
     setRecognitionSupported
   ] = useState(false);
 
+  /*
+   * Nouveau :
+   * mémorise le message qui vient
+   * d'être copié pour afficher
+   * "Copié !"
+   */
+  const [copiedMessageId, setCopiedMessageId] =
+    useState(null);
+
   const fileInputRef =
     useRef(null);
 
@@ -684,6 +662,78 @@ function App() {
           )
       })
     );
+  }
+
+  /*
+   * ============================================================
+   * COPIE EN UN CLIC
+   * ============================================================
+   */
+
+  async function copyResponse(
+    messageId,
+    content
+  ) {
+    if (!content?.trim()) {
+      return;
+    }
+
+    try {
+      if (
+        navigator.clipboard &&
+        window.isSecureContext
+      ) {
+        await navigator.clipboard.writeText(
+          content
+        );
+      } else {
+        const textarea =
+          document.createElement(
+            "textarea"
+          );
+
+        textarea.value =
+          content;
+
+        textarea.style.position =
+          "fixed";
+        textarea.style.left =
+          "-9999px";
+
+        document.body.appendChild(
+          textarea
+        );
+
+        textarea.focus();
+        textarea.select();
+
+        document.execCommand(
+          "copy"
+        );
+
+        document.body.removeChild(
+          textarea
+        );
+      }
+
+      setCopiedMessageId(
+        messageId
+      );
+
+      window.setTimeout(() => {
+        setCopiedMessageId(
+          current =>
+            current ===
+            messageId
+              ? null
+              : current
+        );
+      }, 1600);
+    } catch (_) {
+      setError(
+        "Impossible de copier cette réponse. Essaie à nouveau."
+      );
+    }
   }
 
   function stopSpeaking() {
@@ -1328,17 +1378,6 @@ function App() {
    * ============================================================
    * ENVOI PRINCIPAL
    * ============================================================
-   *
-   * C'est ici que l'architecture change.
-   *
-   * Avant :
-   * tout partait vers /api/tutor.
-   *
-   * Maintenant :
-   *
-   * 1. Nouveau quiz -> /api/quiz action=start
-   * 2. Quiz actif -> /api/quiz action=answer
-   * 3. Tout le reste -> /api/tutor
    */
 
   async function submitQuestion(
@@ -1384,14 +1423,6 @@ function App() {
     const userText =
       text.trim();
 
-    /*
-     * Si un quiz est actif, le message
-     * est automatiquement une réponse.
-     *
-     * Exception :
-     * si l'utilisateur demande explicitement
-     * un nouveau quiz, on recommence un quiz.
-     */
     const startingNewQuiz =
       isQuizStartRequest(
         userText
@@ -1411,19 +1442,11 @@ function App() {
         userText
       );
 
-    /*
-     * Si l'utilisateur demande simplement
-     * d'arrêter le quiz, on termine localement
-     * sans demander à Gemini de deviner quoi que ce soit.
-     */
     if (stoppingQuiz) {
-      const visibleQuestion =
-        userText;
-
       const userMessage = {
         role: "user",
         content:
-          visibleQuestion,
+          userText,
         id: makeId(),
         createdAt:
           new Date().toISOString()
@@ -1506,10 +1529,6 @@ function App() {
           ).slice(0, 55)
         : activeConversation.title;
 
-    /*
-     * On sauvegarde immédiatement le message
-     * de l'utilisateur.
-     */
     updateConversation(
       conversationId,
       c => ({
@@ -1545,6 +1564,7 @@ function App() {
        * MODE QUIZ
        * ========================================================
        */
+
       if (
         startingNewQuiz ||
         answeringQuiz
@@ -1554,13 +1574,6 @@ function App() {
             ? "start"
             : "answer";
 
-        /*
-         * Pour un nouveau quiz :
-         * on ne transmet pas l'ancien état.
-         *
-         * Pour une réponse :
-         * on transmet l'état exact du quiz.
-         */
         const quizStateToSend =
           startingNewQuiz
             ? null
@@ -1625,14 +1638,6 @@ function App() {
               new Date().toISOString()
           };
 
-        /*
-         * Très important :
-         * le backend renvoie maintenant
-         * l'état officiel du quiz.
-         *
-         * Le frontend ne tente plus
-         * de le reconstruire.
-         */
         updateConversation(
           conversationId,
           c => ({
@@ -1660,6 +1665,7 @@ function App() {
        * MODE TUTEUR NORMAL
        * ========================================================
        */
+
       const response =
         await fetch(
           "/api/tutor",
@@ -1753,54 +1759,625 @@ function App() {
     setVoiceStatus("");
   }
 
+  /*
+   * ============================================================
+   * ZONE DE SAISIE
+   * ============================================================
+   *
+   * Cette zone est maintenant placée SOUS la conversation.
+   *
+   * Avec position: sticky, elle reste visible en bas
+   * de l'écran pendant que l'utilisateur descend dans
+   * la conversation.
+   */
+
+  const questionComposer = (
+    <section className="k-card k-composer">
+      {activeQuiz?.active && (
+        <div
+          className="k-quiz-status"
+          aria-live="polite"
+        >
+          🎯{" "}
+          <strong>
+            Quiz en cours
+          </strong>
+
+          <br />
+
+          Question{" "}
+          <strong>
+            {activeQuiz.questionNumber || 1}
+          </strong>
+          /
+          <strong>
+            {activeQuiz.total || 10}
+          </strong>
+
+          {" · "}
+
+          Score :{" "}
+          <strong>
+            {activeQuiz.score || 0}
+          </strong>
+          /
+          {Math.max(
+            0,
+            (activeQuiz.questionNumber || 1) - 1
+          )}
+
+          <br />
+
+          <span>
+            Ta réponse ci-dessous sera
+            automatiquement envoyée au quiz.
+          </span>
+        </div>
+      )}
+
+      <form
+        onSubmit={
+          submitQuestion
+        }
+      >
+        <div
+          className="k-field"
+          style={{
+            marginTop:
+              activeQuiz?.active
+                ? 12
+                : 0
+          }}
+        >
+          <label htmlFor="k-question">
+            {activeQuiz?.active
+              ? "✍️ Ta réponse au quiz"
+              : "🙋 Ta question ou ton cours"}
+          </label>
+
+          <textarea
+            id="k-question"
+            value={text}
+            onChange={e =>
+              setText(
+                e.target.value
+              )
+            }
+            placeholder={
+              activeQuiz?.active
+                ? "Écris ta réponse : 3/5, 13/15, A, B, C, D, etc."
+                : "Pose une question ou continue la discussion précédente…"
+            }
+          />
+        </div>
+
+        <div className="k-actions">
+          <button
+            type="button"
+            className="k-btn secondary"
+            onClick={
+              toggleListening
+            }
+            disabled={loading}
+          >
+            {listening
+              ? "⏹ Arrêter le micro"
+              : "🎙 Question vocale"}
+          </button>
+
+          <button
+            type="button"
+            className="k-btn secondary"
+            onClick={() =>
+              fileInputRef.current?.click()
+            }
+            disabled={
+              loading ||
+              activeQuiz?.active
+            }
+          >
+            📎 Ajouter un fichier
+            ou une photo
+          </button>
+
+          <input
+            ref={
+              fileInputRef
+            }
+            type="file"
+            accept=".pdf,.txt,application/pdf,text/plain,image/jpeg,image/png,image/webp"
+            style={{
+              display: "none"
+            }}
+            onChange={e => {
+              handleFile(
+                e.target.files?.[0]
+              );
+
+              e.target.value =
+                "";
+            }}
+          />
+        </div>
+
+        {fileName && (
+          <div className="k-status">
+            📄 Fichier sélectionné :{" "}
+            <strong>
+              {fileName}
+            </strong>
+
+            <div className="k-actions">
+              <button
+                type="button"
+                className="k-btn secondary"
+                onClick={
+                  removeFile
+                }
+              >
+                Retirer le fichier
+              </button>
+            </div>
+          </div>
+        )}
+
+        {imagePreview && (
+          <img
+            src={
+              imagePreview
+            }
+            alt="Aperçu du fichier image"
+            className="k-preview"
+          />
+        )}
+
+        <p className="k-note">
+          Formats acceptés :
+          PDF (3 Mo maximum),
+          TXT (100 Ko maximum),
+          images JPG, PNG ou
+          WebP (4 Mo maximum).
+        </p>
+
+        <div className="k-actions">
+          <button
+            className="k-btn"
+            type="submit"
+            disabled={loading}
+          >
+            {loading
+              ? "Klasévia réfléchit…"
+              : activeQuiz?.active
+                ? "✅ Valider ma réponse"
+                : "✨ Envoyer ma question"}
+          </button>
+
+          {activeQuiz?.active && (
+            <button
+              className="k-btn stop"
+              type="button"
+              onClick={() => {
+                setText(
+                  "Arrête le quiz"
+                );
+              }}
+              disabled={loading}
+            >
+              🛑 Terminer le quiz
+            </button>
+          )}
+
+          <button
+            className="k-btn secondary"
+            type="button"
+            onClick={
+              clearDraft
+            }
+            disabled={loading}
+          >
+            Effacer le brouillon
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div
+          className="k-error"
+          role="alert"
+        >
+          {error}
+        </div>
+      )}
+
+      {voiceStatus && (
+        <div
+          className="k-status"
+          aria-live="polite"
+        >
+          {voiceStatus}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <main className="klasevia-app">
       <style>{`
-        .klasevia-app{max-width:1000px;margin:0 auto;padding:18px;color:#18352d;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-        .k-hero{background:linear-gradient(135deg,#e8f6ee,#f5fbf7);border:1px solid #d6e8dd;border-radius:22px;padding:24px;margin-bottom:18px}
-        .k-hero h1{margin:0 0 8px;font-size:30px}
-        .k-hero p{margin:0;line-height:1.6}
-        .k-layout{display:grid;grid-template-columns:minmax(220px,270px) minmax(0,1fr);gap:16px;align-items:start}
-        .k-card{background:#fff;border:1px solid #dce6df;border-radius:18px;padding:20px;margin:0 0 16px;box-shadow:0 4px 18px #19382b0a;min-width:0}
-        .k-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-        .k-field{display:flex;flex-direction:column;gap:6px}
-        .k-field label{font-size:14px;font-weight:650}
-        .k-field select,.k-field textarea,.k-field input{width:100%;box-sizing:border-box;border:1px solid #cbd9d0;border-radius:11px;padding:12px;font:inherit;background:white;color:#18352d}
-        .k-field textarea{min-height:120px;resize:vertical}
-        .k-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-        .k-btn{border:0;border-radius:12px;padding:12px 16px;background:#176c4c;color:white;font:inherit;font-weight:650;cursor:pointer}
-        .k-btn.secondary{background:#eaf4ed;color:#19583f}
-        .k-btn.stop{background:#8b3333}
-        .k-btn:disabled{opacity:.55;cursor:not-allowed}
-        .k-note{color:#526a5e;font-size:13px;line-height:1.5}
-        .k-error{background:#fff0ee;color:#8b2525;padding:12px;border-radius:10px;margin-top:12px;overflow-wrap:anywhere}
-        .k-status{background:#edf7f0;color:#245f43;padding:10px;border-radius:10px;margin-top:12px;font-size:14px;overflow-wrap:anywhere}
-        .k-quiz-status{background:#fff8df;border:1px solid #eadb98;color:#665117;padding:12px;border-radius:12px;margin-top:12px;font-size:14px;line-height:1.5}
-        .k-answer{line-height:1.75;overflow-wrap:anywhere}
-        .k-answer img{max-width:100%}
-        .k-answer table{display:block;max-width:100%;overflow-x:auto}
-        .k-answer pre{overflow-x:auto;padding:12px;background:#f4f7f5;border-radius:10px}
-        .k-preview{max-width:100%;max-height:260px;border-radius:12px;margin-top:12px}
-        .k-answer .katex-display{overflow-x:auto;overflow-y:hidden;padding:5px 0}
-        .k-history-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
-        .k-history-title h2{font-size:19px;margin:0}
-        .k-history-list{display:flex;flex-direction:column;gap:8px;margin-top:14px}
-        .k-history-item{display:flex;align-items:stretch;gap:4px;border:1px solid #dce6df;border-radius:12px;overflow:hidden}
-        .k-history-open{flex:1;min-width:0;text-align:left;background:white;color:#18352d;border:0;padding:11px;cursor:pointer;font:inherit}
-        .k-history-open.active{background:#e8f6ee}
-        .k-history-name{display:block;font-size:14px;font-weight:700;overflow-wrap:anywhere}
-        .k-history-date{display:block;font-size:12px;color:#607368;margin-top:4px}
-        .k-delete{border:0;background:#fff0ee;color:#8b2525;padding:8px;cursor:pointer}
-        .k-message{padding:14px;border-radius:14px;margin:14px 0;min-width:0}
-        .k-message.user{background:#edf6f0;border:1px solid #d8e9dd}
-        .k-message.assistant{background:#fff;border:1px solid #e0e7e2}
-        .k-message-label{font-size:12px;font-weight:750;color:#426553;margin-bottom:7px}
-        .k-message-content{line-height:1.7;overflow-wrap:anywhere}
-        .k-message-content pre{white-space:pre-wrap;overflow-wrap:anywhere}
-        .k-message-content .katex-display{overflow-x:auto;overflow-y:hidden}
-        .k-empty{padding:20px 10px;text-align:center;color:#607368;line-height:1.6}
-        .k-sidebar-new{width:100%;margin-top:12px}
-        @media(max-width:720px){.klasevia-app{padding:10px}.k-layout{grid-template-columns:1fr}.k-hero{padding:19px}.k-hero h1{font-size:25px}.k-card{padding:15px}.k-grid{grid-template-columns:1fr}.k-actions .k-btn{flex:1 1 100%}}
+        .klasevia-app{
+          max-width:1000px;
+          margin:0 auto;
+          padding:18px;
+          color:#18352d;
+          font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        }
+
+        .k-hero{
+          background:linear-gradient(135deg,#e8f6ee,#f5fbf7);
+          border:1px solid #d6e8dd;
+          border-radius:22px;
+          padding:24px;
+          margin-bottom:18px;
+        }
+
+        .k-hero h1{
+          margin:0 0 8px;
+          font-size:30px;
+        }
+
+        .k-hero p{
+          margin:0;
+          line-height:1.6;
+        }
+
+        .k-layout{
+          display:grid;
+          grid-template-columns:minmax(220px,270px) minmax(0,1fr);
+          gap:16px;
+          align-items:start;
+        }
+
+        .k-card{
+          background:#fff;
+          border:1px solid #dce6df;
+          border-radius:18px;
+          padding:20px;
+          margin:0 0 16px;
+          box-shadow:0 4px 18px #19382b0a;
+          min-width:0;
+        }
+
+        /*
+         * NOUVEAU :
+         * la zone de saisie reste visible
+         * en bas pendant le défilement.
+         */
+        .k-composer{
+          position:sticky;
+          bottom:10px;
+          z-index:20;
+          box-shadow:0 8px 30px rgba(24,53,45,.14);
+          border-color:#cbded2;
+        }
+
+        .k-grid{
+          display:grid;
+          grid-template-columns:repeat(2,minmax(0,1fr));
+          gap:12px;
+        }
+
+        .k-field{
+          display:flex;
+          flex-direction:column;
+          gap:6px;
+        }
+
+        .k-field label{
+          font-size:14px;
+          font-weight:650;
+        }
+
+        .k-field select,
+        .k-field textarea,
+        .k-field input{
+          width:100%;
+          box-sizing:border-box;
+          border:1px solid #cbd9d0;
+          border-radius:11px;
+          padding:12px;
+          font:inherit;
+          background:white;
+          color:#18352d;
+        }
+
+        .k-field textarea{
+          min-height:120px;
+          resize:vertical;
+        }
+
+        .k-composer .k-field textarea{
+          min-height:95px;
+          max-height:220px;
+        }
+
+        .k-actions{
+          display:flex;
+          flex-wrap:wrap;
+          gap:10px;
+          margin-top:14px;
+        }
+
+        .k-btn{
+          border:0;
+          border-radius:12px;
+          padding:12px 16px;
+          background:#176c4c;
+          color:white;
+          font:inherit;
+          font-weight:650;
+          cursor:pointer;
+        }
+
+        .k-btn.secondary{
+          background:#eaf4ed;
+          color:#19583f;
+        }
+
+        .k-btn.stop{
+          background:#8b3333;
+        }
+
+        .k-btn:disabled{
+          opacity:.55;
+          cursor:not-allowed;
+        }
+
+        .k-note{
+          color:#526a5e;
+          font-size:13px;
+          line-height:1.5;
+        }
+
+        .k-error{
+          background:#fff0ee;
+          color:#8b2525;
+          padding:12px;
+          border-radius:10px;
+          margin-top:12px;
+          overflow-wrap:anywhere;
+        }
+
+        .k-status{
+          background:#edf7f0;
+          color:#245f43;
+          padding:10px;
+          border-radius:10px;
+          margin-top:12px;
+          font-size:14px;
+          overflow-wrap:anywhere;
+        }
+
+        .k-quiz-status{
+          background:#fff8df;
+          border:1px solid #eadb98;
+          color:#665117;
+          padding:12px;
+          border-radius:12px;
+          font-size:14px;
+          line-height:1.5;
+        }
+
+        .k-answer{
+          line-height:1.75;
+          overflow-wrap:anywhere;
+        }
+
+        .k-answer img{
+          max-width:100%;
+        }
+
+        .k-answer table{
+          display:block;
+          max-width:100%;
+          overflow-x:auto;
+        }
+
+        .k-answer pre{
+          overflow-x:auto;
+          padding:12px;
+          background:#f4f7f5;
+          border-radius:10px;
+        }
+
+        .k-preview{
+          max-width:100%;
+          max-height:260px;
+          border-radius:12px;
+          margin-top:12px;
+        }
+
+        .k-answer .katex-display{
+          overflow-x:auto;
+          overflow-y:hidden;
+          padding:5px 0;
+        }
+
+        .k-history-title{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:8px;
+        }
+
+        .k-history-title h2{
+          font-size:19px;
+          margin:0;
+        }
+
+        .k-history-list{
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+          margin-top:14px;
+        }
+
+        .k-history-item{
+          display:flex;
+          align-items:stretch;
+          gap:4px;
+          border:1px solid #dce6df;
+          border-radius:12px;
+          overflow:hidden;
+        }
+
+        .k-history-open{
+          flex:1;
+          min-width:0;
+          text-align:left;
+          background:white;
+          color:#18352d;
+          border:0;
+          padding:11px;
+          cursor:pointer;
+          font:inherit;
+        }
+
+        .k-history-open.active{
+          background:#e8f6ee;
+        }
+
+        .k-history-name{
+          display:block;
+          font-size:14px;
+          font-weight:700;
+          overflow-wrap:anywhere;
+        }
+
+        .k-history-date{
+          display:block;
+          font-size:12px;
+          color:#607368;
+          margin-top:4px;
+        }
+
+        .k-delete{
+          border:0;
+          background:#fff0ee;
+          color:#8b2525;
+          padding:8px;
+          cursor:pointer;
+        }
+
+        .k-message{
+          padding:14px;
+          border-radius:14px;
+          margin:14px 0;
+          min-width:0;
+        }
+
+        .k-message.user{
+          background:#edf6f0;
+          border:1px solid #d8e9dd;
+        }
+
+        .k-message.assistant{
+          background:#fff;
+          border:1px solid #e0e7e2;
+        }
+
+        .k-message-label{
+          font-size:12px;
+          font-weight:750;
+          color:#426553;
+          margin-bottom:7px;
+        }
+
+        .k-message-content{
+          line-height:1.7;
+          overflow-wrap:anywhere;
+        }
+
+        .k-message-content pre{
+          white-space:pre-wrap;
+          overflow-wrap:anywhere;
+        }
+
+        .k-message-content .katex-display{
+          overflow-x:auto;
+          overflow-y:hidden;
+        }
+
+        /*
+         * Nouveau :
+         * les boutons d'action des réponses
+         * sont regroupés proprement.
+         */
+        .k-response-actions{
+          display:flex;
+          flex-wrap:wrap;
+          gap:8px;
+          margin-top:12px;
+        }
+
+        .k-copy-success{
+          background:#dff4e5 !important;
+          color:#175c3c !important;
+        }
+
+        .k-empty{
+          padding:20px 10px;
+          text-align:center;
+          color:#607368;
+          line-height:1.6;
+        }
+
+        .k-sidebar-new{
+          width:100%;
+          margin-top:12px;
+        }
+
+        @media(max-width:720px){
+          .klasevia-app{
+            padding:10px;
+          }
+
+          .k-layout{
+            grid-template-columns:1fr;
+          }
+
+          .k-hero{
+            padding:19px;
+          }
+
+          .k-hero h1{
+            font-size:25px;
+          }
+
+          .k-card{
+            padding:15px;
+          }
+
+          .k-grid{
+            grid-template-columns:1fr;
+          }
+
+          /*
+           * Sur téléphone, on garde une petite marge
+           * en bas pour que la zone de saisie ne colle
+           * pas complètement au bord.
+           */
+          .k-composer{
+            bottom:6px;
+            padding:13px;
+          }
+
+          .k-actions .k-btn{
+            flex:1 1 100%;
+          }
+
+          .k-composer .k-actions .k-btn{
+            flex:1 1 100%;
+          }
+        }
       `}</style>
 
       <header className="k-hero">
@@ -1935,6 +2512,15 @@ function App() {
         </aside>
 
         <div>
+          {/*
+           * ======================================================
+           * PARAMÈTRES
+           * ======================================================
+           *
+           * La zone de saisie n'est plus ici.
+           * Elle est maintenant sous la conversation.
+           */}
+
           <section className="k-card">
             <h2>
               Préparons ta réponse
@@ -2077,233 +2663,13 @@ function App() {
                 </select>
               </div>
             </div>
-
-            {activeQuiz?.active && (
-              <div
-                className="k-quiz-status"
-                aria-live="polite"
-              >
-                🎯{" "}
-                <strong>
-                  Quiz en cours
-                </strong>
-
-                <br />
-
-                Question{" "}
-                <strong>
-                  {activeQuiz.questionNumber || 1}
-                </strong>
-                /
-                <strong>
-                  {activeQuiz.total || 10}
-                </strong>
-
-                {" · "}
-
-                Score :{" "}
-                <strong>
-                  {activeQuiz.score || 0}
-                </strong>
-                /
-                {Math.max(
-                  0,
-                  (activeQuiz.questionNumber || 1) - 1
-                )}
-
-                <br />
-
-                <span>
-                  Ta prochaine réponse sera
-                  automatiquement traitée par
-                  le quiz.
-                </span>
-              </div>
-            )}
-
-            <form
-              onSubmit={
-                submitQuestion
-              }
-            >
-              <div
-                className="k-field"
-                style={{
-                  marginTop: 16
-                }}
-              >
-                <label htmlFor="k-question">
-                  {activeQuiz?.active
-                    ? "Ta réponse au quiz"
-                    : "Ta question ou ton cours"}
-                </label>
-
-                <textarea
-                  id="k-question"
-                  value={text}
-                  onChange={e =>
-                    setText(
-                      e.target.value
-                    )
-                  }
-                  placeholder={
-                    activeQuiz?.active
-                      ? "Écris ta réponse : 2/4, 6/10, A, B, C, D, etc."
-                      : "Pose une question ou continue la discussion précédente…"
-                  }
-                />
-              </div>
-
-              <div className="k-actions">
-                <button
-                  type="button"
-                  className="k-btn secondary"
-                  onClick={
-                    toggleListening
-                  }
-                  disabled={loading}
-                >
-                  {listening
-                    ? "⏹ Arrêter le micro"
-                    : "🎙 Question vocale"}
-                </button>
-
-                <button
-                  type="button"
-                  className="k-btn secondary"
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
-                  disabled={
-                    loading ||
-                    activeQuiz?.active
-                  }
-                >
-                  📎 Ajouter un fichier
-                  ou une photo
-                </button>
-
-                <input
-                  ref={
-                    fileInputRef
-                  }
-                  type="file"
-                  accept=".pdf,.txt,application/pdf,text/plain,image/jpeg,image/png,image/webp"
-                  style={{
-                    display: "none"
-                  }}
-                  onChange={e => {
-                    handleFile(
-                      e.target.files?.[0]
-                    );
-
-                    e.target.value =
-                      "";
-                  }}
-                />
-              </div>
-
-              {fileName && (
-                <div className="k-status">
-                  📄 Fichier sélectionné :{" "}
-                  <strong>
-                    {fileName}
-                  </strong>
-
-                  <div className="k-actions">
-                    <button
-                      type="button"
-                      className="k-btn secondary"
-                      onClick={
-                        removeFile
-                      }
-                    >
-                      Retirer le
-                      fichier
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {imagePreview && (
-                <img
-                  src={
-                    imagePreview
-                  }
-                  alt="Aperçu du fichier image"
-                  className="k-preview"
-                />
-              )}
-
-              <p className="k-note">
-                Formats acceptés :
-                PDF (3 Mo maximum),
-                TXT (100 Ko
-                maximum), images
-                JPG, PNG ou WebP
-                (4 Mo maximum).
-              </p>
-
-              <div className="k-actions">
-                <button
-                  className="k-btn"
-                  type="submit"
-                  disabled={loading}
-                >
-                  {loading
-                    ? "Klasévia réfléchit…"
-                    : activeQuiz?.active
-                      ? "✅ Valider ma réponse"
-                      : "✨ Envoyer ma question"}
-                </button>
-
-                {activeQuiz?.active && (
-                  <button
-                    className="k-btn stop"
-                    type="button"
-                    onClick={() => {
-                      setText(
-                        "Arrête le quiz"
-                      );
-                    }}
-                    disabled={loading}
-                  >
-                    🛑 Terminer le quiz
-                  </button>
-                )}
-
-                <button
-                  className="k-btn secondary"
-                  type="button"
-                  onClick={
-                    clearDraft
-                  }
-                  disabled={loading}
-                >
-                  Effacer le
-                  brouillon
-                </button>
-              </div>
-            </form>
-
-            {error && (
-              <div
-                className="k-error"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
-
-            {voiceStatus && (
-              <div
-                className="k-status"
-                aria-live="polite"
-              >
-                {voiceStatus}
-              </div>
-            )}
           </section>
+
+          {/*
+           * ======================================================
+           * CONVERSATION
+           * ======================================================
+           */}
 
           <section className="k-card">
             <h2>
@@ -2384,7 +2750,28 @@ function App() {
 
                   {message.role ===
                     "assistant" && (
-                    <div className="k-actions">
+                    <div className="k-response-actions">
+                      <button
+                        type="button"
+                        className={`k-btn secondary ${
+                          copiedMessageId ===
+                          message.id
+                            ? "k-copy-success"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          copyResponse(
+                            message.id,
+                            message.content
+                          )
+                        }
+                      >
+                        {copiedMessageId ===
+                        message.id
+                          ? "✅ Copié !"
+                          : "📋 Copier"}
+                      </button>
+
                       <button
                         type="button"
                         className="k-btn secondary"
@@ -2475,6 +2862,17 @@ function App() {
               </p>
             )}
           </section>
+
+          {/*
+           * ======================================================
+           * NOUVELLE ZONE DE SAISIE
+           * ======================================================
+           *
+           * Elle est maintenant directement après la conversation.
+           * position: sticky la maintient visible en bas de l'écran.
+           */}
+
+          {questionComposer}
         </div>
       </div>
 
