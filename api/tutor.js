@@ -11,6 +11,7 @@ export default async function handler(req, res) {
       grade = "",
       subject = "",
       serie = "",
+      theme = "",
       difficulty = "",
       history = [],
       mode = ""
@@ -27,6 +28,8 @@ export default async function handler(req, res) {
     const normalizedMessage = String(message)
       .toLowerCase()
       .trim();
+
+    const normalizedTheme = String(theme || "").trim();
 
     const recentHistory = Array.isArray(history)
       ? history.slice(-20)
@@ -99,16 +102,6 @@ export default async function handler(req, res) {
      * ============================================================
      * DÉTECTION ROBUSTE D'UNE QUESTION DE QUIZ
      * ============================================================
-     *
-     * On ne cherche pas uniquement le mot "question".
-     * Une question de quiz peut être :
-     *
-     * "Quelle fraction..."
-     * "Combien..."
-     * "Que vaut..."
-     * "Quel est..."
-     * "Calcule..."
-     * ou simplement contenir A. B. C. D.
      */
 
     const hasQuizChoices =
@@ -144,23 +137,6 @@ export default async function handler(req, res) {
      * ============================================================
      * DÉTECTION DES RÉPONSES COURTES
      * ============================================================
-     *
-     * On accepte explicitement :
-     *
-     * A
-     * B
-     * C
-     * D
-     * A.
-     * B)
-     * 2/4
-     * 6/10
-     * 3/5
-     * 12
-     * 7,5
-     * 7.5
-     *
-     * Mais aussi quelques réponses textuelles courtes.
      */
 
     const isLetterAnswer =
@@ -197,11 +173,6 @@ export default async function handler(req, res) {
      * ============================================================
      * RÉPONSE À UN QUIZ
      * ============================================================
-     *
-     * IMPORTANT :
-     * Si Klasévia vient de poser une question et que l'élève répond
-     * avec quelque chose de court, on considère cela comme une
-     * réponse au quiz.
      */
 
     const isQuizAnswer =
@@ -227,10 +198,39 @@ les élèves en Côte d'Ivoire.
 Niveau scolaire : ${grade || "non précisé"}
 Matière : ${subject || "non précisée"}
 Série : ${serie || "non précisée"}
+Thème : ${normalizedTheme || "non précisé"}
 Difficulté : ${difficulty || "non précisée"}
 
 Tu réponds toujours en français clair, naturel et adapté au niveau
 scolaire de l'élève.
+
+IMPORTANT POUR LE THÈME :
+
+Lorsque le champ "Thème" est renseigné, il représente la notion,
+le chapitre ou le sujet précis que l'élève souhaite travailler.
+
+Tu dois utiliser ce thème comme contexte pédagogique prioritaire.
+
+Par exemple :
+
+- Niveau : 5e
+- Matière : Mathématiques
+- Thème : Fractions
+
+Dans ce cas, les explications, exercices, exemples et questions
+doivent porter principalement sur les fractions.
+
+Autre exemple :
+
+- Niveau : 3e
+- Matière : Français
+- Thème : Les figures de style
+
+Dans ce cas, le contenu doit principalement concerner les figures
+de style.
+
+Si aucun thème n'est renseigné, réponds normalement en utilisant
+la matière, le niveau, la série et le message de l'élève.
 
 RÈGLES GÉNÉRALES :
 
@@ -322,15 +322,19 @@ Tu dois créer ou poursuivre un quiz scolaire.
 Si l'élève vient de demander un quiz, commence DIRECTEMENT par
 la première question.
 
-Ne demande pas quel chapitre l'élève souhaite travailler si son
-message contient déjà le thème.
+Le thème fourni par Klasévia doit être utilisé comme sujet principal
+du quiz lorsqu'il est renseigné.
+
+Ne demande pas quel chapitre l'élève souhaite travailler si le
+champ "Thème" contient déjà cette information.
 
 Exemple :
 
-"Fais-moi un quiz de mathématiques niveau 5e sur les fractions."
+Niveau : 5e
+Matière : Mathématiques
+Thème : Fractions
 
-Tu dois immédiatement poser une première question sur les fractions
-niveau 5e.
+Dans ce cas, le quiz doit porter sur les fractions de niveau 5e.
 
 RÈGLES :
 
@@ -417,6 +421,8 @@ MODE EXERCICE ACTIVÉ
 
 Propose un exercice adapté au niveau de l'élève.
 
+Le thème doit être respecté lorsqu'il est renseigné.
+
 Types possibles :
 
 - calcul ;
@@ -471,6 +477,9 @@ Si elle est incorrecte :
 - donne la bonne réponse.
 
 Pour les mathématiques, refais toujours le calcul indépendamment.
+
+Lorsque le thème est renseigné, vérifie également que la correction
+reste centrée sur ce thème.
 `;
     }
 
@@ -491,6 +500,9 @@ Si l'élève pose une question scolaire :
 - explique simplement ;
 - donne un exemple si utile ;
 - adapte l'explication à son niveau.
+
+Lorsque le thème est renseigné, utilise-le pour orienter
+l'explication et les exemples.
 
 Pour les mathématiques, montre les étapes du raisonnement
 et vérifie le résultat.
@@ -539,7 +551,7 @@ Réponds maintenant à l'élève.
      */
 
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=" +
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=" +
         encodeURIComponent(apiKey),
       {
         method: "POST",
@@ -558,7 +570,6 @@ Réponds maintenant à l'élève.
             }
           ],
           generationConfig: {
-            temperature: isQuiz ? 0.3 : 0.5,
             maxOutputTokens: 4096
           }
         })
