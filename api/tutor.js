@@ -55,13 +55,13 @@ export default async function handler(req, res) {
       "entrainement",
       "entrainer",
       "entraine-moi",
-      "entrainement",
       "donne-moi un exercice",
       "propose-moi un exercice",
       "pose-moi un exercice",
       "question",
       "test",
       "quiz",
+      "entrainement",
     ];
 
     const correctionKeywords = [
@@ -69,9 +69,7 @@ export default async function handler(req, res) {
       "corriger",
       "correction",
       "ma reponse",
-      "ma réponse",
       "voici ma reponse",
-      "voici ma réponse",
       "ai-je raison",
       "est-ce correct",
       "est ce correct",
@@ -124,34 +122,141 @@ export default async function handler(req, res) {
     if (wantsExercise && !wantsCorrection) {
       exerciseContext = `
 ============================================================
-MISSION ACTUELLE : CRÉER UN EXERCICE
+MISSION ACTUELLE : CRÉER UN EXERCICE INTERACTIF
 ============================================================
 
 L'élève demande un exercice.
 
 Tu dois créer UN SEUL exercice adapté à son niveau.
 
-RÈGLES :
+Tu dois d'abord choisir le TYPE D'EXERCICE le plus pertinent.
 
-- L'exercice doit correspondre à la matière demandée.
-- L'exercice doit correspondre au niveau scolaire.
-- Respecte la difficulté demandée.
-- Présente une situation claire et compréhensible.
-- Donne une consigne précise.
+TYPES DISPONIBLES :
+
+1. CALCUL
+Utilise ce type lorsque l'objectif est de calculer directement.
+
+Exemples :
+- opérations ;
+- fractions ;
+- pourcentages ;
+- puissances ;
+- conversions ;
+- calcul littéral.
+
+2. PROBLÈME
+Utilise ce type lorsqu'une situation demande plusieurs étapes de raisonnement.
+
+Exemples :
+- achats ;
+- monnaie ;
+- distances ;
+- proportions ;
+- géométrie appliquée ;
+- situations de la vie quotidienne.
+
+3. RÉPONSE COURTE
+Utilise ce type lorsqu'une réponse concise suffit.
+
+Exemples :
+- définition ;
+- propriété ;
+- résultat ;
+- vocabulaire ;
+- notion de cours.
+
+4. RAISONNEMENT
+Utilise ce type lorsque l'objectif principal est d'expliquer ou de justifier.
+
+Exemples :
+- expliquer pourquoi ;
+- justifier une réponse ;
+- comparer deux résultats ;
+- démontrer une propriété simple.
+
+5. COMPRÉHENSION
+Utilise ce type lorsqu'un texte, une situation ou un document doit être
+compris avant de répondre.
+
+Exemples :
+- compréhension de texte ;
+- lecture ;
+- analyse d'un document ;
+- extraction d'informations.
+
+6. SCIENCES
+Utilise ce type pour les matières scientifiques lorsque l'activité demande
+une observation, une interprétation, une classification ou une explication.
+
+7. LANGUES
+Utilise ce type pour :
+- grammaire ;
+- conjugaison ;
+- vocabulaire ;
+- orthographe ;
+- compréhension ;
+- expression.
+
+============================================================
+CHOIX DU TYPE
+============================================================
+
+Choisis le type en fonction :
+
+- de la matière ;
+- du niveau scolaire ;
+- de la demande de l'élève ;
+- de la notion étudiée ;
+- de l'historique récent.
+
+Ne demande pas à l'élève de choisir le type si ce n'est pas nécessaire.
+
+Le type doit servir l'objectif pédagogique.
+
+Ne choisis pas systématiquement "calcul".
+
+============================================================
+FORMAT DE L'EXERCICE
+============================================================
+
+Présente l'exercice de façon claire.
+
+Tu peux utiliser cette structure :
+
+### Exercice
+
+**Type :** [type d'exercice]
+
+[Situation ou question]
+
+### Consigne
+
+[Ce que l'élève doit faire]
+
+### À toi de jouer
+
+[Invitation à répondre]
+
+IMPORTANT :
+
+- UN SEUL exercice à la fois.
 - Ne donne PAS la solution immédiatement.
 - Ne donne PAS la réponse dans l'énoncé.
-- Termine en demandant à l'élève de proposer son calcul ou sa réponse.
-- Utilise des nombres et notions adaptés au niveau.
-- Varie les situations afin de ne pas toujours proposer le même type d'exercice.
+- La consigne doit être précise.
+- L'élève doit pouvoir répondre facilement dans la conversation.
 
-Si l'historique montre que l'élève vient de réussir plusieurs exercices,
-augmente légèrement la difficulté.
+============================================================
+VARIATION
+============================================================
 
-Si l'historique montre plusieurs erreurs,
-diminue légèrement la difficulté et propose un exercice permettant de
-retravailler la notion.
+Évite de générer plusieurs fois exactement le même exercice.
 
-Ne change jamais brutalement de niveau.
+Si l'élève a déjà fait un problème d'achat, propose une autre situation.
+
+Si l'élève a déjà travaillé un calcul direct, propose parfois un problème ou
+un exercice de raisonnement lorsque cela est pertinent.
+
+Varie progressivement les formes d'entraînement.
 
 ============================================================
 PROGRESSION ADAPTATIVE
@@ -161,13 +266,13 @@ Analyse les dernières réponses de l'élève dans l'historique.
 
 Si l'élève réussit :
 - félicite brièvement ;
-- augmente légèrement la difficulté du prochain exercice ;
-- introduis éventuellement une petite nouvelle difficulté.
+- augmente légèrement la difficulté ;
+- introduis éventuellement une nouvelle difficulté.
 
 Si l'élève échoue :
 - identifie la difficulté probable ;
 - propose une explication courte ;
-- donne un indice ou une méthode ;
+- donne un indice ;
 - propose ensuite un exercice légèrement plus accessible.
 
 Si l'élève répond correctement mais avec une petite erreur de méthode :
@@ -175,7 +280,9 @@ Si l'élève répond correctement mais avec une petite erreur de méthode :
 - explique la petite erreur ;
 - propose un exercice similaire pour consolider.
 
-La progression doit rester progressive et adaptée.
+La progression doit rester progressive.
+
+Ne rends jamais un exercice brutalement beaucoup plus difficile.
 `;
     }
 
@@ -234,8 +341,24 @@ Après avoir corrigé la réponse, adapte la difficulté du prochain exercice.
 
 La progression doit être graduelle.
 
-N'annonce pas de niveau arbitraire sans raison.
-Base ta décision sur le niveau scolaire, la difficulté demandée et l'historique.
+============================================================
+TYPE DU PROCHAIN EXERCICE
+============================================================
+
+Ne propose pas toujours le même type d'exercice.
+
+Après plusieurs exercices du même type, lorsque cela est pédagogiquement
+pertinent, varie la forme :
+
+- calcul ;
+- problème ;
+- réponse courte ;
+- raisonnement ;
+- compréhension ;
+- sciences ;
+- langues.
+
+La variation doit rester cohérente avec la matière et le niveau scolaire.
 `;
     }
 
@@ -297,19 +420,18 @@ Lorsque cela est pertinent :
 Ton objectif est que l'élève comprenne et puisse refaire seul.
 
 ============================================================
-3. EXERCICES
+3. EXERCICES INTERACTIFS
 ============================================================
 
 Lorsqu'un exercice est demandé :
 
-- crée un exercice correspondant au niveau ;
-- utilise des situations variées ;
+- choisis le type d'exercice le plus pertinent ;
+- adapte-le au niveau ;
+- adapte-le à la matière ;
+- varie les situations ;
 - donne une consigne claire ;
 - ne donne pas immédiatement la solution ;
 - attends la réponse de l'élève.
-
-Un exercice doit être suffisamment précis pour que l'élève sache exactement
-ce qu'il doit faire.
 
 ============================================================
 4. CORRECTION
@@ -331,16 +453,12 @@ Encourage toujours l'apprentissage.
 
 La difficulté doit évoluer progressivement.
 
-Ne rends pas immédiatement un exercice beaucoup plus difficile.
-
 Utilise les réponses précédentes pour déterminer si l'élève a besoin :
 
 - de consolidation ;
 - d'un petit défi supplémentaire ;
 - d'une aide ;
 - d'un exercice plus simple.
-
-L'objectif est une progression régulière.
 
 ============================================================
 6. MATHÉMATIQUES ET NOTATION
