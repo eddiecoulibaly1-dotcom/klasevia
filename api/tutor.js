@@ -68,7 +68,13 @@ export default async function handler(req, res) {
       normalizedMessage.includes("exercice") ||
       normalizedMessage.includes("exercices") ||
       normalizedMessage.includes("entraînement") ||
-      normalizedMessage.includes("entrainement");
+      normalizedMessage.includes("entrainement") ||
+      normalizedMessage.includes("entraine-moi") ||
+      normalizedMessage.includes("entraine moi") ||
+      normalizedMessage.includes("donne-moi un exercice") ||
+      normalizedMessage.includes("donne moi un exercice") ||
+      normalizedMessage.includes("propose-moi un exercice") ||
+      normalizedMessage.includes("propose moi un exercice");
 
     const isCorrection =
       mode === "correction" ||
@@ -419,32 +425,41 @@ priorité sur toute réponse préparée précédemment.
 
 MODE EXERCICE ACTIVÉ
 
-Propose un exercice adapté au niveau de l'élève.
+L'élève demande explicitement un exercice.
 
-Le thème doit être respecté lorsqu'il est renseigné.
+Tu dois donc produire IMMÉDIATEMENT UN SEUL EXERCICE.
 
-Types possibles :
+RÈGLES ABSOLUES :
 
-- calcul ;
-- problème ;
-- réponse courte ;
-- raisonnement ;
-- compréhension ;
-- sciences ;
-- langues.
+1. Ne fais PAS de message d'accueil.
+2. Ne demande PAS à l'élève ce qu'il veut faire.
+3. Ne propose PAS une liste de choix.
+4. Ne demande PAS si l'élève veut un exercice.
+5. Ne réponds PAS par "Comment puis-je t'aider ?".
+6. Ne donne PAS immédiatement la correction.
+7. Donne directement l'énoncé d'un exercice.
+8. L'exercice doit correspondre au niveau scolaire.
+9. L'exercice doit correspondre à la matière.
+10. Si un thème est renseigné, l'exercice doit porter principalement
+    sur ce thème.
+11. Donne une seule consigne ou un seul problème.
+12. Termine en invitant simplement l'élève à donner sa réponse.
 
-Présente un seul exercice à la fois.
+EXEMPLE DE STRUCTURE :
 
-Ne donne pas immédiatement la solution.
+### Exercice
 
-Attends la réponse de l'élève avant de corriger.
+[énoncé de l'exercice]
 
-ADAPTATION :
+**À toi de jouer !**
 
-- réussite claire : augmente légèrement la difficulté ;
-- réussite partielle : reste au même niveau et consolide ;
-- erreur : propose une difficulté légèrement plus accessible ;
-- plusieurs erreurs : reprends la notion avec davantage de guidage.
+Ne donne pas la solution tant que l'élève n'a pas répondu.
+
+Pour les mathématiques, vérifie mentalement le résultat de l'exercice
+avant de l'envoyer.
+
+Si le thème est "Fractions" en 5e, propose réellement un exercice
+sur les fractions de niveau 5e.
 `;
     }
 
@@ -511,7 +526,7 @@ et vérifie le résultat.
 
     /*
      * ============================================================
-     * ADAPTATION
+     * ADAPTATION DE LA DIFFICULTÉ
      * ============================================================
      */
 
@@ -540,9 +555,105 @@ ${historyText || "Aucun historique disponible."}
 MESSAGE ACTUEL DE L'ÉLÈVE :
 
 ${message}
-
-Réponds maintenant à l'élève.
 `;
+
+    /*
+     * ============================================================
+     * INSTRUCTION FINALE PRIORITAIRE
+     * ============================================================
+     *
+     * Cette partie est volontairement placée à la toute fin.
+     * Elle empêche Gemini de revenir à une réponse d'accueil
+     * lorsqu'une intention précise a déjà été détectée.
+     */
+
+    if (isExercise) {
+      mission += `
+
+============================================================
+INSTRUCTION FINALE PRIORITAIRE — EXERCICE
+============================================================
+
+L'intention détectée est : EXERCICE.
+
+Le message de l'élève est :
+
+"${message}"
+
+Le thème sélectionné est :
+
+"${normalizedTheme || "aucun thème précisé"}"
+
+Tu dois maintenant exécuter cette intention.
+
+INTERDICTIONS ABSOLUES :
+
+- Ne fais aucun message d'accueil.
+- Ne dis pas "Bonjour".
+- Ne dis pas "Akwaba".
+- Ne dis pas "Comment puis-je t'aider ?".
+- Ne demande pas ce que l'élève souhaite faire.
+- Ne propose pas plusieurs options.
+- Ne demande pas si l'élève veut un exercice.
+- Ne demande pas de précision si le niveau, la matière ou le thème
+  sont déjà disponibles.
+
+ACTION OBLIGATOIRE :
+
+Produis immédiatement UN exercice adapté au niveau "${grade || "non précisé"}",
+dans la matière "${subject || "non précisée"}".
+
+Le thème "${normalizedTheme || "non précisé"}" doit être respecté
+si celui-ci est renseigné.
+
+Pour une demande de fractions en 5e, l'exercice doit réellement
+porter sur les fractions de niveau 5e.
+
+Ne donne pas la solution.
+
+Termine uniquement par une invitation courte à répondre,
+par exemple :
+
+"À toi de jouer !"
+
+EXÉCUTE MAINTENANT L'EXERCICE.
+============================================================
+`;
+    } else if (isQuiz) {
+      mission += `
+
+INSTRUCTION FINALE PRIORITAIRE — QUIZ
+
+L'intention détectée est : QUIZ.
+
+Si une nouvelle question est demandée, commence directement
+le quiz.
+
+Ne fais pas de message d'accueil inutile.
+Ne demande pas d'information déjà disponible.
+
+Respecte le niveau, la matière, la série et le thème.
+`;
+    } else if (isCorrection) {
+      mission += `
+
+INSTRUCTION FINALE PRIORITAIRE — CORRECTION
+
+L'intention détectée est : CORRECTION.
+
+Corrige directement la réponse de l'élève.
+Ne transforme pas la demande en message d'accueil.
+`;
+    } else {
+      mission += `
+
+INSTRUCTION FINALE PRIORITAIRE — TUTORAT
+
+Aucune intention spéciale n'a été détectée.
+
+Réponds directement au message de l'élève.
+`;
+    }
 
     /*
      * ============================================================
@@ -571,17 +682,6 @@ Réponds maintenant à l'élève.
      * ============================================================
      * APPEL GEMINI AVEC RETRY AUTOMATIQUE
      * ============================================================
-     *
-     * Les erreurs 503 peuvent être temporaires.
-     *
-     * Tentative 1 :
-     * appel immédiat
-     *
-     * Tentative 2 :
-     * attente de 1 seconde
-     *
-     * Tentative 3 :
-     * attente de 2 secondes
      */
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
