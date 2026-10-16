@@ -457,12 +457,6 @@ footer {
   font-size: 1.08em;
 }
 
-/*
- * Les fractions KaTeX utilisent plusieurs éléments internes
- * (numérateur, dénominateur, lignes, etc.).
- * On laisse KaTeX gérer leur affichage et on évite que
- * les règles générales de l'application les perturbent.
- */
 .katex,
 .katex * {
   box-sizing: content-box;
@@ -492,10 +486,6 @@ footer {
   text-align: center;
 }
 
-/*
- * Les formules longues peuvent défiler horizontalement
- * sans casser l'écran du téléphone.
- */
 .katex-display {
   display: block;
   overflow-x: auto;
@@ -510,11 +500,6 @@ footer {
   white-space: nowrap;
 }
 
-/*
- * Important :
- * on ne transforme pas le contenu interne de KaTeX en
- * texte normal et on ne lui applique pas white-space: pre-wrap.
- */
 .k-message-content .katex {
   white-space: normal;
 }
@@ -527,34 +512,15 @@ footer {
   white-space: normal;
 }
 
-/*
- * Les éléments MathML de KaTeX restent disponibles pour
- * l'accessibilité mais ne doivent pas perturber le rendu
- * visuel normal.
- */
+/* Correction du doublage des fractions KaTeX */
 .katex-mathml {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  display: none !important;
 }
 
-/*
- * Évite qu'une règle globale de paragraphe ou de préformatage
- * ne transforme les éléments KaTeX en blocs de texte.
- */
 .k-message-content .katex span {
   white-space: nowrap;
 }
 
-/*
- * Sur téléphone, on conserve une taille confortable.
- */
 @media (max-width: 720px) {
   .katex {
     font-size: 1em;
