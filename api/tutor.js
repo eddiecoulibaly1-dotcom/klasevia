@@ -64,6 +64,10 @@ function detectIntent(message, mode) {
     return "exercice";
   }
 
+  if (mode === "guidage") {
+    return "guidage";
+  }
+
   if (mode === "synthese" || mode === "synthèse") {
     return "synthese";
   }
@@ -87,6 +91,22 @@ L'élève demande un exercice. Tu dois en donner UN immédiatement.
 - Ne donne ni la réponse ni la correction avant la tentative de l'élève.
 - Termine par "À toi de jouer !".
 - Vérifie la justesse mathématique de l'énoncé avant de répondre.
+`;
+  }
+
+  if (intent === "guidage") {
+    return `
+MODE APPRENTISSAGE GUIDÉ.
+
+Tu ne dois pas seulement donner la réponse : tu dois faire progresser l'élève.
+Structure ta réponse ainsi :
+1. "### 🎯 Objectif" : une phrase simple sur ce qu'il faut comprendre.
+2. Une explication progressive, adaptée à la classe et à la matière.
+3. "### 🧠 À retenir" : 2 à 4 idées essentielles.
+4. "### 🔎 Vérifie ta compréhension" : UNE question courte à laquelle l'élève doit répondre.
+5. "### ➡️ Étape suivante" : indique quel exercice ou quelle action permettra de consolider la compétence.
+Ne donne pas la réponse à la question de vérification.
+Si l'élève répond à cette question dans le message suivant, corrige sa réponse avant de poursuivre.
 `;
   }
 
@@ -136,7 +156,10 @@ function buildPrompt({
   theme,
   difficulty,
   mode,
-  history
+  history,
+  skillId,
+  skillName,
+  learningContext
 }) {
   const intent = detectIntent(message, mode);
 
@@ -163,6 +186,10 @@ Matière : ${subject || "non précisée"}
 Série : ${serie || "non précisée"}
 Thème choisi : ${theme || "non précisé"}
 Niveau de détail : ${difficulty || "détaillé"}
+Compétence suivie : ${skillName || skillId || "détection automatique"}
+Maîtrise actuelle connue : ${learningContext ? `${learningContext.mastery}%` : "non disponible"}
+Tentatives connues : ${learningContext ? learningContext.attempts : "non disponible"}
+Réussites connues : ${learningContext ? learningContext.correctAttempts : "non disponible"}
 
 RÈGLES GÉNÉRALES
 - Réponds en français clair et naturel.
@@ -172,6 +199,9 @@ RÈGLES GÉNÉRALES
 - Pour les mathématiques, vérifie les calculs et les résultats.
 - Ne prétends pas avoir lu un document si son contenu est inaccessible.
 - Utilise des exemples ivoiriens lorsque cela est pertinent, sans forcer.
+- Si une compétence suivie est fournie, adapte la difficulté et l'explication à son niveau de maîtrise.
+- Ne révèle jamais les métriques internes de maîtrise à l'élève.
+- Une réponse pédagogique doit conduire à une action de l'élève : expliquer, répondre, appliquer ou s'exercer.
 
 ${getIntentInstructions(intent)}
 
@@ -341,6 +371,11 @@ export default async function handler(req, res) {
     const theme = String(body.theme || "").trim();
     const difficulty = String(body.difficulty || "détaillé");
     const mode = String(body.mode || "explication");
+    const skillId = String(body.skillId || "").trim();
+    const skillName = String(body.skillName || "").trim();
+    const learningContext = body.learningContext && typeof body.learningContext === "object"
+      ? body.learningContext
+      : null;
 
     const history = Array.isArray(body.history)
       ? body.history
@@ -375,7 +410,10 @@ export default async function handler(req, res) {
       theme,
       difficulty,
       mode,
-      history
+      history,
+      skillId,
+      skillName,
+      learningContext
     });
 
     const parts = buildParts({
