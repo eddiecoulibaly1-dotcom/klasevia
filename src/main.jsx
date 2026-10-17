@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { supabase } from "./supabaseClient";
 import "katex/dist/katex.min.css";
 import "./style.css";
 
@@ -556,6 +557,23 @@ function App() {
   const [error, setError] =
     useState("");
 
+  // ==========================================================
+  // COMPTE & PONT SUPABASE — V58
+  // ==========================================================
+  const [cloudEmail, setCloudEmail] = useState("");
+  const [cloudPassword, setCloudPassword] = useState("");
+  const [cloudUser, setCloudUser] = useState(null);
+  const [cloudProfile, setCloudProfile] = useState(null);
+  const [cloudProgress, setCloudProgress] = useState([]);
+  const [cloudSkills, setCloudSkills] = useState([]);
+  const [selectedSkillId, setSelectedSkillId] = useState("");
+  const [cloudReviews, setCloudReviews] = useState([]);
+  const [cloudConversations, setCloudConversations] = useState([]);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudLoading, setCloudLoading] = useState(true);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudError, setCloudError] = useState("");
+
   const [speaking, setSpeaking] =
     useState(false);
 
@@ -638,6 +656,335 @@ function App() {
       );
     }
   }, [savedData]);
+
+  /*
+   * ==========================================================
+   * PONT SUPABASE — V58
+   * ==========================================================
+   */
+
+  async function loadCloudData(user) {
+    if (!user) {
+      setCloudProfile(null);
+      setCloudProgress([]);
+      setCloudReviews([]);
+      return;
+    }
+
+    const [profileResult, progressResult, reviewResult, conversationsResult, skillsResult] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("user_id, full_name, role, xp, streak_days, level")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("skill_progress")
+        .select("skill_id, mastery, attempts, correct_attempts, last_attempt_at, updated_at")
+        .eq("user_id", user.id)
+        .order("mastery", { ascending: false }),
+      supabase
+        .from("review_recommendations")
+        .select("id, skill_id, exercise_id, reason, due_at, priority, status, created_at")
+        .eq("student_id", user.id)
+        .eq("status", "open")
+        .order("due_at", { ascending: true })
+        .limit(20),
+      supabase
+        .from("student_conversations")
+        .select("id, local_id, title, grade, serie, subject, theme, difficulty, mode, quiz_state, status, created_at, updated_at, context")
+        .eq("student_id", user.id)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false })
+        .limit(MAX_SAVED_CONVERSATIONS),
+      supabase
+        .from("skills")
+        .select("id, subject_id, name, description, sort_order")
+        .order("subject_id")
+        .order("sort_order")
+    ]);
+
+    if (profileResult.error) throw profileResult.error;
+    if (progressResult.error) throw progressResult.error;
+    if (reviewResult.error) throw reviewResult.error;
+    if (conversationsResult.error) throw conversationsResult.error;
+    if (skillsResult.error) throw skillsResult.error;
+
+    const remoteConversations = (conversationsResult.data || [])
+      .map(row => normalizeConversation({
+        id: row.local_id,
+        title: row.title,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        grade: row.grade,
+        serie: row.serie,
+        subject: row.subject,
+        theme: row.theme || "",
+        difficulty: row.difficulty || "détaillé",
+        mode: row.mode || "explication",
+        quizState: row.quiz_state || null,
+        messages: Array.isArray(row.context?.messages) ? row.context.messages : [],
+        context: row.context || {}
+      }))
+      .filter(Boolean);
+
+    setCloudProfile(profileResult.data || null);
+    setCloudProgress(progressResult.data || []);
+    setCloudReviews(reviewResult.data || []);
+    setCloudSkills(skillsResult.data || []);
+    setCloudConversations(remoteConversations);
+    return remoteConversations;
+  }
+
+  function mergeConversationSources(previous, remoteConversations = []) {
+    const localConversations = previous?.conversations || [];
+    const byId = new Map();
+
+    for (const conversation of localConversations) {
+      const normalized = normalizeConversation(conversation);
+      if (normalized) byId.set(normalized.id, normalized);
+    }
+
+    for (const remote of remoteConversations) {
+      const local = byId.get(remote.id);
+      if (!local || new Date(remote.updatedAt).getTime() > new Date(local.updatedAt).getTime()) {
+        byId.set(remote.id, remote);
+      }
+    }
+
+    const merged = [...byId.values()]
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+      .slice(0, MAX_SAVED_CONVERSATIONS);
+
+    const activeId = merged.some(c => c.id === previous?.activeId)
+      ? previous.activeId
+      : merged[0]?.id;
+
+    return { conversations: merged, activeId };
+  }
+
+  function inferSkillForConversation(conversation) {
+    const haystack = `${conversation?.subject || ""} ${conversation?.theme || ""} ${conversation?.messages?.slice(-2).map(m => m.content).join(" ") || ""}`.toLowerCase();
+    const rules = [
+      ["math.fractions", /fraction|fractions|numérateur|dénominateur|simplifier|quart|tiers|moitié/],
+      ["math.equations", /équation|equations|inconnue|x\s*[+=-]|résoudre/],
+      ["fr.sujet", /sujet|phrase|verbe|accord|grammaire/],
+      ["svt.photosynthese", /photosynthèse|chlorophylle|lumière|co2|dioxyde de carbone/],
+      ["pc.units", /unité|unités|grandeur|mètre|kilogramme|seconde|physique/],
+      ["hg.reperes", /histoire|géographie|repère|dates|guerre|espace|territoire/],
+      ["en.vocabulaire", /anglais|english|vocabulaire|word|words|meaning/]
+    ];
+    const hit = rules.find(([, regex]) => regex.test(haystack));
+    return hit?.[0] || "";
+  }
+
+  async function saveConversationToCloud(conversation) {
+    if (!cloudUser || !conversation) return;
+
+    const payload = {
+      student_id: cloudUser.id,
+      local_id: conversation.id,
+      title: conversation.title || "Nouvelle conversation",
+      grade: conversation.grade || "Terminale",
+      serie: conversation.serie || null,
+      subject: conversation.subject || null,
+      theme: conversation.theme || null,
+      difficulty: conversation.difficulty || null,
+      mode: conversation.mode || null,
+      quiz_state: conversation.quizState || {},
+      status: "active",
+      context: {
+        version: 2,
+        source: "klasevia-react-v60",
+        skill_id: conversation.context?.skill_id || inferSkillForConversation(conversation) || null,
+        messages: Array.isArray(conversation.messages) ? conversation.messages : []
+      },
+      created_at: conversation.createdAt || new Date().toISOString(),
+      updated_at: conversation.updatedAt || new Date().toISOString()
+    };
+
+    const { error: cloudSaveError } = await supabase
+      .from("student_conversations")
+      .upsert(payload, { onConflict: "student_id,local_id" });
+
+    if (cloudSaveError) {
+      throw cloudSaveError;
+    }
+  }
+
+  async function deleteConversationFromCloud(localId) {
+    if (!cloudUser || !localId) return;
+
+    const { error: cloudDeleteError } = await supabase
+      .from("student_conversations")
+      .delete()
+      .eq("student_id", cloudUser.id)
+      .eq("local_id", localId);
+
+    if (cloudDeleteError) throw cloudDeleteError;
+  }
+
+  useEffect(() => {
+    if (!cloudReady || !cloudUser) return;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        for (const conversation of savedData.conversations) {
+          await saveConversationToCloud(conversation);
+        }
+        setCloudConversations(savedData.conversations);
+      } catch (syncError) {
+        setCloudError(syncError?.message || "La synchronisation de l'historique a échoué.");
+      }
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [savedData.conversations, cloudReady, cloudUser]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function initCloud() {
+      setCloudLoading(true);
+      setCloudError("");
+
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        const sessionUser = data.session?.user || null;
+
+        if (mounted) {
+          setCloudUser(sessionUser);
+          const remoteConversations = await loadCloudData(sessionUser);
+          if (sessionUser) {
+            setSavedData(previous => mergeConversationSources(previous, remoteConversations));
+          }
+          setCloudReady(Boolean(sessionUser));
+        }
+      } catch (cloudInitError) {
+        if (mounted) {
+          setCloudError(
+            cloudInitError?.message ||
+            "La connexion au compte Klasévia est indisponible."
+          );
+        }
+      } finally {
+        if (mounted) {
+          setCloudLoading(false);
+        }
+      }
+    }
+
+    initCloud();
+
+    const { data: authSubscription } =
+      supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (!mounted) return;
+
+        const nextUser = session?.user || null;
+        setCloudUser(nextUser);
+        setCloudLoading(true);
+        setCloudError("");
+
+        try {
+          const remoteConversations = await loadCloudData(nextUser);
+          if (nextUser) {
+            setSavedData(previous => mergeConversationSources(previous, remoteConversations));
+          }
+          setCloudReady(Boolean(nextUser));
+        } catch (cloudAuthError) {
+          if (mounted) {
+            setCloudError(
+              cloudAuthError?.message ||
+              "Impossible de charger les données Klasévia."
+            );
+          }
+        } finally {
+          if (mounted) {
+            setCloudLoading(false);
+          }
+        }
+      });
+
+    return () => {
+      mounted = false;
+      authSubscription.subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleCloudLogin(event) {
+    event.preventDefault();
+
+    if (!cloudEmail.trim() || !cloudPassword) {
+      setCloudError("Renseigne ton email et ton mot de passe.");
+      return;
+    }
+
+    setCloudBusy(true);
+    setCloudError("");
+
+    const { error: loginError } = await supabase.auth.signInWithPassword({
+      email: cloudEmail.trim(),
+      password: cloudPassword
+    });
+
+    setCloudBusy(false);
+
+    if (loginError) {
+      setCloudError(loginError.message);
+      return;
+    }
+
+    setCloudPassword("");
+  }
+
+  async function handleCloudLogout() {
+    setCloudBusy(true);
+    setCloudError("");
+
+    const { error: logoutError } = await supabase.auth.signOut();
+
+    setCloudBusy(false);
+
+    if (logoutError) {
+      setCloudError(logoutError.message);
+    }
+  }
+
+  async function refreshCloudData() {
+    if (!cloudUser) return;
+
+    setCloudLoading(true);
+    setCloudError("");
+
+    try {
+      const remoteConversations = await loadCloudData(cloudUser);
+      setSavedData(previous => mergeConversationSources(previous, remoteConversations));
+    } catch (refreshError) {
+      setCloudError(
+        refreshError?.message ||
+        "Impossible de rafraîchir la progression et l'historique."
+      );
+    } finally {
+      setCloudLoading(false);
+    }
+  }
+
+  const cloudMastery = cloudProgress.length
+    ? Math.round(
+        cloudProgress.reduce(
+          (sum, item) => sum + Number(item.mastery || 0),
+          0
+        ) / cloudProgress.length
+      )
+    : 0;
+
+  const cloudDueReviews = cloudReviews.filter(
+    item => new Date(item.due_at).getTime() <= Date.now()
+  ).length;
 
   /*
    * ==========================================================
@@ -1237,6 +1584,7 @@ function App() {
 
     setText("");
     setError("");
+    setSelectedSkillId("");
 
     removeFile();
 
@@ -1311,6 +1659,10 @@ function App() {
         "explication"
     );
 
+    setSelectedSkillId(
+      conversation.context?.skill_id || inferSkillForConversation(conversation) || ""
+    );
+
     setText("");
     setError("");
 
@@ -1325,9 +1677,18 @@ function App() {
    * ==========================================================
    */
 
-  function deleteConversation(
+  async function deleteConversation(
     id
   ) {
+    if (cloudUser) {
+      try {
+        await deleteConversationFromCloud(id);
+      } catch (deleteError) {
+        setError(deleteError?.message || "Impossible de supprimer la conversation dans le cloud.");
+        return;
+      }
+    }
+
     const remaining =
       conversations.filter(
         c => c.id !== id
@@ -1621,6 +1982,16 @@ function App() {
 
         difficulty,
         mode,
+        context: {
+          ...(c.context || {}),
+          version: 2,
+          skill_id: selectedSkillId || inferSkillForConversation({
+            ...c,
+            theme,
+            subject,
+            messages: [...c.messages, userMessage]
+          }) || null
+        },
         updatedAt:
           new Date().toISOString(),
 
@@ -1898,6 +2269,17 @@ function App() {
           gap:16px;
           align-items:start
         }
+
+
+        .k-learning-panel{
+          background:linear-gradient(135deg,#f5fbf7,#ffffff);
+          border-color:#cfe3d6
+        }
+        .k-learning-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+        .k-learning-head h2{margin:0 0 5px;font-size:19px}
+        .k-learning-badge{white-space:nowrap;background:#e8f6ee;color:#176c4c;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:750}
+        .k-learning-summary{margin-top:10px;background:#edf7f0;border-radius:12px;padding:11px;line-height:1.55;font-size:13px}
+        @media(max-width:720px){.k-learning-head{flex-direction:column}.k-learning-badge{align-self:flex-start}}
 
         .k-card{
           background:#fff;
@@ -2224,6 +2606,102 @@ function App() {
           min-width:0
         }
 
+        .k-cloud-card{
+          margin-bottom:16px
+        }
+
+        .k-cloud-header{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          margin-bottom:12px
+        }
+
+        .k-cloud-header h2{
+          margin:3px 0 0;
+          font-size:19px
+        }
+
+        .k-cloud-eyebrow{
+          color:#7a8c82;
+          font-size:10px;
+          font-weight:800;
+          letter-spacing:1.3px
+        }
+
+        .k-cloud-badge{
+          border-radius:999px;
+          padding:7px 10px;
+          font-size:12px;
+          font-weight:750;
+          white-space:nowrap
+        }
+
+        .k-cloud-badge.online{
+          background:#e6f6eb;
+          color:#176c4c
+        }
+
+        .k-cloud-badge.offline{
+          background:#f1f3f1;
+          color:#63756c
+        }
+
+        .k-cloud-grid{
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          gap:12px
+        }
+
+        .k-cloud-summary{
+          display:grid;
+          grid-template-columns:2fr repeat(3,1fr);
+          gap:10px
+        }
+
+        .k-cloud-summary > div{
+          border:1px solid #dce6df;
+          border-radius:13px;
+          padding:12px;
+          background:#f9fcfa;
+          min-width:0
+        }
+
+        .k-cloud-summary strong,
+        .k-cloud-summary span{
+          display:block;
+          overflow-wrap:anywhere
+        }
+
+        .k-cloud-summary span{
+          margin-top:4px;
+          color:#687a70;
+          font-size:12px
+        }
+
+        .k-cloud-skills{
+          display:grid;
+          grid-template-columns:repeat(2,minmax(0,1fr));
+          gap:8px;
+          margin-top:12px
+        }
+
+        .k-cloud-skill{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:8px;
+          padding:9px 11px;
+          background:#f4f8f5;
+          border-radius:10px;
+          font-size:12px
+        }
+
+        .k-cloud-skill span{
+          overflow-wrap:anywhere
+        }
+
         /*
          * ======================================================
          * MOBILE
@@ -2254,6 +2732,16 @@ function App() {
 
           .k-grid{
             grid-template-columns:1fr
+          }
+
+          .k-cloud-grid,
+          .k-cloud-summary,
+          .k-cloud-skills{
+            grid-template-columns:1fr
+          }
+
+          .k-cloud-header{
+            align-items:flex-start
           }
 
           .k-main-column{
@@ -2348,6 +2836,92 @@ function App() {
         </p>
       </header>
 
+      <section className="k-card k-cloud-card" aria-labelledby="k-cloud-title">
+        <div className="k-cloud-header">
+          <div>
+            <span className="k-cloud-eyebrow">V59 · HISTORIQUE CLOUD</span>
+            <h2 id="k-cloud-title">☁️ Compte & progression</h2>
+          </div>
+          <span className={`k-cloud-badge ${cloudUser ? "online" : "offline"}`}>
+            {cloudLoading ? "Connexion…" : cloudUser ? "Connecté" : "Hors connexion"}
+          </span>
+        </div>
+
+        {!cloudUser ? (
+          <form className="k-cloud-login" onSubmit={handleCloudLogin}>
+            <div className="k-cloud-grid">
+              <div className="k-field">
+                <label htmlFor="cloud-email">Email</label>
+                <input
+                  id="cloud-email"
+                  type="email"
+                  value={cloudEmail}
+                  onChange={event => setCloudEmail(event.target.value)}
+                  placeholder="eleve@exemple.com"
+                  autoComplete="email"
+                  disabled={cloudBusy}
+                />
+              </div>
+              <div className="k-field">
+                <label htmlFor="cloud-password">Mot de passe</label>
+                <input
+                  id="cloud-password"
+                  type="password"
+                  value={cloudPassword}
+                  onChange={event => setCloudPassword(event.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  disabled={cloudBusy}
+                />
+              </div>
+            </div>
+            <div className="k-actions">
+              <button className="k-btn" type="submit" disabled={cloudBusy}>
+                {cloudBusy ? "Connexion…" : "🔐 Se connecter"}
+              </button>
+            </div>
+            <p className="k-note">
+              La connexion est optionnelle : l'application continue de fonctionner localement.
+              Les comptes élèves doivent être créés depuis l'administration Klasévia.
+            </p>
+          </form>
+        ) : (
+          <div>
+            <div className="k-cloud-summary">
+              <div><strong>{cloudProfile?.full_name || cloudUser.email || "Compte Klasévia"}</strong><span>{cloudProfile?.role || "compte authentifié"}</span></div>
+              <div><strong>{cloudProfile?.xp ?? 0}</strong><span>XP</span></div>
+              <div><strong>{cloudMastery}%</strong><span>maîtrise moyenne</span></div>
+              <div><strong>{cloudDueReviews}</strong><span>révision(s) due(s)</span></div>
+              <div><strong>{cloudConversations.length}</strong><span>conversation(s) cloud</span></div>
+            </div>
+            <div className="k-actions">
+              <button type="button" className="k-btn secondary" onClick={refreshCloudData} disabled={cloudLoading || cloudBusy}>
+                ↻ Actualiser & synchroniser
+              </button>
+              <button type="button" className="k-btn secondary" onClick={handleCloudLogout} disabled={cloudBusy}>
+                Se déconnecter
+              </button>
+            </div>
+            {cloudProgress.length > 0 && (
+              <div className="k-cloud-skills">
+                {cloudProgress.slice(0, 5).map(item => (
+                  <div key={item.skill_id} className="k-cloud-skill">
+                    <span>{item.skill_id}</span>
+                    <strong>{Number(item.mastery || 0)}%</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {cloudError && (
+          <div className="k-error" role="alert">
+            {cloudError}
+          </div>
+        )}
+      </section>
+
       <div className="k-layout">
 
         <aside className="k-card">
@@ -2371,9 +2945,9 @@ function App() {
           </button>
 
           <p className="k-note">
-            Tes discussions sont
-            sauvegardées dans ce
-            navigateur.
+            {!cloudUser
+              ? "Tes discussions sont sauvegardées dans ce navigateur. Connecte-toi pour les synchroniser automatiquement avec ton compte Klasévia."
+              : "☁️ Historique synchronisé avec ton compte Klasévia."}
           </p>
 
           <div className="k-history-list">
