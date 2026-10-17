@@ -51,3 +51,7 @@ Les conversations sont protégées par Postgres RLS. La documentation Supabase r
 ## Important
 
 V59 ne crée pas de compte élève dans l'interface publique. Les comptes restent provisionnés selon le modèle d'administration Klasévia.
+
+
+## V61
+Ajout du tuteur pédagogique guidé et de la prise en compte de la compétence suivie.
